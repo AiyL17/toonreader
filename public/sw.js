@@ -1,9 +1,11 @@
 /* ─── ToonReader Service Worker ──────────────────────────────────────────────
-   Provides offline shell caching so the app loads even with no connection.
-   API calls (manga data, images) are always fetched fresh from the network.
+   Shell assets  → cache-first (instant repeat loads)
+   Read-only API → stale-while-revalidate (serve cache instantly, refresh in bg)
+   Write API     → network-only (auth, sync, image proxy)
 ──────────────────────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = 'toonreader-shell-v5';
+const SHELL_CACHE = 'toonreader-shell-v6';
+const API_CACHE   = 'toonreader-api-v1';
 
 // Static assets that make up the app shell
 const SHELL_ASSETS = [
@@ -15,12 +17,23 @@ const SHELL_ASSETS = [
   'https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js',
 ];
 
+// Read-only API paths that benefit from stale-while-revalidate caching.
+// Auth, sync, and image-proxy routes are intentionally excluded.
+const API_CACHE_PREFIXES = [
+  '/api/latest',
+  '/api/browse',
+  '/api/search',
+  '/api/manga/',
+];
+
+function isReadOnlyApi(pathname) {
+  return API_CACHE_PREFIXES.some(p => pathname.startsWith(p));
+}
+
 // ─── Install: cache the app shell ────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(SHELL_ASSETS);
-    })
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS))
   );
   self.skipWaiting();
 });
@@ -31,7 +44,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME)
+          .filter((key) => key !== SHELL_CACHE && key !== API_CACHE)
           .map((key) => caches.delete(key))
       )
     )
@@ -39,29 +52,48 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// ─── Fetch: network-first for API, cache-first for shell ─────────────────────
+// ─── Fetch ────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Always go to network for API calls and image proxy
+  // ── Read-only API: stale-while-revalidate ──────────────────────────────────
+  // Serve the cached response immediately (zero latency on repeat visits),
+  // then update the cache in the background so the next request is fresh.
+  if (event.request.method === 'GET' && isReadOnlyApi(url.pathname)) {
+    event.respondWith(
+      caches.open(API_CACHE).then(async (cache) => {
+        const cached = await cache.match(event.request);
+
+        // Always kick off a background network fetch to keep the cache warm.
+        const networkFetch = fetch(event.request).then((response) => {
+          if (response.ok) cache.put(event.request, response.clone());
+          return response;
+        }).catch(() => null);
+
+        // Return the cached copy instantly if available; otherwise wait for network.
+        return cached || networkFetch;
+      })
+    );
+    return;
+  }
+
+  // ── Write / auth / image-proxy: always network ────────────────────────────
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // Cache-first for shell assets
+  // ── Shell assets: cache-first ─────────────────────────────────────────────
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        // Cache successful GET responses for shell assets
         if (response.ok && event.request.method === 'GET') {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          caches.open(SHELL_CACHE).then((cache) => cache.put(event.request, clone));
         }
         return response;
       });
     })
   );
 });
-

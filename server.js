@@ -18,16 +18,21 @@ const JWT_EXPIRY = '30d';
 const app = express();
 
 // ─── Compression ──────────────────────────────────────────────────────────────
-app.use(compression());
+// Lower threshold to 512 B so even small JSON API responses get compressed.
+app.use(compression({ threshold: 512 }));
 
 // ─── Caches ───────────────────────────────────────────────────────────────────
 // maxKeys prevents unbounded memory growth on long-running instances.
 // When the limit is reached, node-cache evicts the oldest entry automatically.
-const cache       = new NodeCache({ stdTTL: 900,   checkperiod: 120,  maxKeys: 500  }); // latest/chapters: 15 min, max 500 entries
-const browseCache = new NodeCache({ stdTTL: 1800,  checkperiod: 180,  maxKeys: 1000 }); // browse/search/manga: 30 min, max 1000 entries
-const coverCache  = new NodeCache({ stdTTL: 86400, checkperiod: 3600, maxKeys: 2000 }); // covers: 24 h, max 2000 entries
+const cache            = new NodeCache({ stdTTL: 900,   checkperiod: 120,  maxKeys: 500  }); // latest/chapters: 15 min, max 500 entries
+const browseCache      = new NodeCache({ stdTTL: 1800,  checkperiod: 180,  maxKeys: 1000 }); // browse/search/manga: 30 min, max 1000 entries
+const coverCache       = new NodeCache({ stdTTL: 86400, checkperiod: 3600, maxKeys: 2000 }); // covers: 24 h, max 2000 entries
 // Image buffers are large (~100–500 KB each); cap at 200 entries (~100 MB worst-case).
-const imgCache    = new NodeCache({ stdTTL: 3600,  checkperiod: 600,  maxKeys: 200  }); // images: 1 h, max 200 entries
+const imgCache         = new NodeCache({ stdTTL: 3600,  checkperiod: 600,  maxKeys: 200  }); // images: 1 h, max 200 entries
+// Parsed manga detail objects (title, chapters, genres…) — avoids re-parsing HTML on every hit.
+const mangaDetailCache = new NodeCache({ stdTTL: 1800,  checkperiod: 180,  maxKeys: 500  }); // manga detail: 30 min, max 500 entries
+// Parsed browse page results — avoids re-running Cheerio on cached HTML.
+const browseResultCache = new NodeCache({ stdTTL: 1800, checkperiod: 180,  maxKeys: 2000 }); // browse results: 30 min, max 2000 entries
 
 const BASE_URL = 'https://mangadistrict.com';
 
@@ -405,6 +410,8 @@ app.get('/api/latest', async (req, res) => {
     const cards = await fetchLatestCards(serverPage);
     prefetch(serverPage + 1);
     prefetch(serverPage + 2);
+    // Allow browsers/SW to serve a stale copy for up to 5 min while revalidating
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
     res.json({ results: cards, page: serverPage });
   } catch (err) {
     console.error('Latest error:', err.message);
@@ -419,6 +426,14 @@ app.get('/api/browse', async (req, res) => {
     const url = genre
       ? `${BASE_URL}/series/?page=${page}&m_orderby=${order}&genre[]=${encodeURIComponent(genre)}`
       : `${BASE_URL}/series/?page=${page}&m_orderby=${order}`;
+
+    // Check parsed-result cache first to skip Cheerio re-parse on hot paths
+    const resultCacheKey = `browse-parsed:${url}`;
+    const cachedResult = browseResultCache.get(resultCacheKey);
+    if (cachedResult) {
+      res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+      return res.json(cachedResult);
+    }
 
     const html = await fetchHTML(url);
     const $ = cheerio.load(html);
@@ -437,7 +452,11 @@ app.get('/api/browse', async (req, res) => {
     const pageMatch = lastPageLink.match(/page\/(\d+)/);
     if (pageMatch) totalPages = parseInt(pageMatch[1]);
 
-    res.json({ results, page: parseInt(page), totalPages });
+    const payload = { results, page: parseInt(page), totalPages };
+    browseResultCache.set(resultCacheKey, payload);
+
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json(payload);
   } catch (err) {
     console.error('Browse error:', err.message);
     res.status(500).json({ error: 'Failed to fetch browse results', details: err.message });
@@ -494,6 +513,7 @@ app.get('/api/search', async (req, res) => {
     const pageMatch = lastPageLink.match(/paged=(\d+)/);
     if (pageMatch) totalPages = parseInt(pageMatch[1]);
 
+    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
     res.json({ results, page: parseInt(page), totalPages });
   } catch (err) {
     console.error('Search error:', err.message);
@@ -502,8 +522,61 @@ app.get('/api/search', async (req, res) => {
 });
 
 // ─── API: Manga Detail ────────────────────────────────────────────────────────
+app.get('/api/manga/batch', async (req, res) => {
+  // Batch endpoint: GET /api/manga/batch?slugs=slug1,slug2,...
+  // Returns { slug: { title, cover, chapters[0..1] } } for up to 20 slugs in one round-trip.
+  const raw = (req.query.slugs || '').toString().trim();
+  if (!raw) return res.status(400).json({ error: 'slugs parameter required' });
+
+  const slugs = raw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+
+  const results = await Promise.all(slugs.map(async (slug) => {
+    // Serve from parsed cache when available
+    const cached = mangaDetailCache.get(slug);
+    if (cached) return [slug, { title: cached.title, cover: cached.cover, chapters: cached.chapters.slice(0, 2) }];
+
+    try {
+      const url  = `${BASE_URL}/series/${slug}/`;
+      const html = await fetchHTML(url);
+      const $    = cheerio.load(html);
+
+      const title    = $('.post-title h1, .post-title h3').first().text().trim();
+      const rawCover = $('.summary_image img').attr('src') || $('.summary_image img').attr('data-src') || '';
+      const cover    = rawCover.startsWith('data:') ? await resolveCover(slug) : rawCover;
+
+      const chapters = [];
+      $('.wp-manga-chapter').each((_, el) => {
+        const $el = $(el);
+        const chLink  = $el.find('a').attr('href') || '';
+        const chTitle = $el.find('a').text().trim();
+        const chDate  = $el.find('.chapter-release-date i').text().trim();
+        if (chLink) chapters.push({ title: chTitle, link: chLink, date: chDate });
+      });
+
+      // Store full detail in cache so /api/manga/:slug also benefits
+      const detail = { title, cover, chapters };
+      mangaDetailCache.set(slug, detail);
+
+      return [slug, { title, cover, chapters: chapters.slice(0, 2) }];
+    } catch {
+      return [slug, null];
+    }
+  }));
+
+  res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+  res.json(Object.fromEntries(results));
+});
+
 app.get('/api/manga/*', async (req, res) => {
   const slug = req.params[0];
+
+  // Serve from parsed-detail cache to skip Cheerio re-parse on hot paths
+  const cachedDetail = mangaDetailCache.get(slug);
+  if (cachedDetail) {
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    return res.json(cachedDetail);
+  }
+
   const url  = `${BASE_URL}/series/${slug}/`;
   try {
     const html = await fetchHTML(url);
@@ -527,7 +600,11 @@ app.get('/api/manga/*', async (req, res) => {
       if (chLink) chapters.push({ title: chTitle, link: chLink, date: chDate });
     });
 
-    res.json({ title, cover, summary, rating, status, author, genres, chapters, url });
+    const payload = { title, cover, summary, rating, status, author, genres, chapters, url };
+    mangaDetailCache.set(slug, payload);
+
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json(payload);
   } catch (err) {
     console.error('Manga detail error:', err.message);
     res.status(500).json({ error: 'Failed to fetch manga details', details: err.message });

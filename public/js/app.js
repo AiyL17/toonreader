@@ -235,6 +235,13 @@ function createMangaCard(item) {
   }
 
   card.addEventListener('click', () => loadMangaDetail(item.link, item.slug));
+
+  // Prefetch manga detail on hover so the detail page loads instantly on click.
+  // `once: true` ensures we only fire one request per card lifetime.
+  card.addEventListener('mouseenter', () => {
+    fetch(`/api/manga/${encodeURIComponent(item.slug)}`).catch(() => {});
+  }, { once: true });
+
   return card;
 }
 
@@ -352,14 +359,15 @@ function loadFavoritesView(page = state.favoritesPage) {
 
   updateFavPageControls(page, totalPages);
 
-  // Render rows immediately with placeholders, then fill chapters async.
-  // Chapter data is cached in localStorage for FAV_CHAPTER_TTL ms to avoid
-  // firing one API request per bookmark on every page open (N+1 problem).
+  // Collect slugs that need a network fetch (not in localStorage cache)
+  const toFetch = [];
+
+  // Render rows immediately with placeholders, then fill chapters.
+  // Chapter data is cached in localStorage for FAV_CHAPTER_TTL ms.
   pageItems.forEach(item => {
     const row = createFavoriteRow(item, null);
     list.appendChild(row);
 
-    // Check localStorage cache first
     const cacheKey = `fav_chapters_${item.slug}`;
     const cached = (() => {
       try {
@@ -373,21 +381,35 @@ function loadFavoritesView(page = state.favoritesPage) {
 
     if (cached) {
       renderFavChapters(row, cached, item);
-      return;
+    } else {
+      toFetch.push(item);
     }
+  });
 
-    // Cache miss — fetch from server
-    apiFetch(`/api/manga/${encodeURIComponent(item.slug)}`)
-      .then(data => {
-        const latest = data.chapters.slice(0, 2);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), chapters: latest })); } catch { /* quota */ }
-        renderFavChapters(row, latest, item);
+  // Batch-fetch all cache-miss slugs in a single request instead of N individual ones.
+  if (toFetch.length > 0) {
+    const slugList = toFetch.map(i => encodeURIComponent(i.slug)).join(',');
+    apiFetch(`/api/manga/batch?slugs=${slugList}`)
+      .then(batchData => {
+        toFetch.forEach(item => {
+          const row = list.querySelector(`.fav-row[data-slug="${CSS.escape(item.slug)}"]`);
+          if (!row) return;
+          const chapters = batchData[item.slug]?.chapters || null;
+          if (chapters) {
+            try { localStorage.setItem(`fav_chapters_${item.slug}`, JSON.stringify({ ts: Date.now(), chapters })); } catch { /* quota */ }
+          }
+          renderFavChapters(row, chapters, item);
+        });
       })
       .catch(() => {
-        const chapterEl = row.querySelector('.fav-chapters');
-        if (chapterEl) chapterEl.innerHTML = '<span class="fav-no-chapters">Failed to load</span>';
+        toFetch.forEach(item => {
+          const row = list.querySelector(`.fav-row[data-slug="${CSS.escape(item.slug)}"]`);
+          if (!row) return;
+          const chapterEl = row.querySelector('.fav-chapters');
+          if (chapterEl) chapterEl.innerHTML = '<span class="fav-no-chapters">Failed to load</span>';
+        });
       });
-  });
+  }
 }
 
 function updateFavPageControls(page, totalPages) {
@@ -470,13 +492,20 @@ function createFavoriteRow(item, chapters) {
 }
 
 function renderGrid(containerId, items) {
-  const container = $(`#${containerId}`);
-  container.innerHTML = '';
+  const container = document.getElementById(containerId);
   if (!items || items.length === 0) {
-    container.innerHTML = '<p class="empty-msg">No results found.</p>';
+    container.replaceChildren();
+    const msg = document.createElement('p');
+    msg.className = 'empty-msg';
+    msg.textContent = 'No results found.';
+    container.appendChild(msg);
     return;
   }
-  items.forEach(item => container.appendChild(createMangaCard(item)));
+  // Build all cards off-DOM in a fragment, then swap in one atomic operation
+  // to avoid layout thrashing and the visible flash of an empty grid.
+  const frag = document.createDocumentFragment();
+  items.forEach(item => frag.appendChild(createMangaCard(item)));
+  container.replaceChildren(frag);
 }
 
 function updatePageControls(prefix, page, totalPages) {
@@ -507,7 +536,38 @@ async function apiFetch(url) {
 }
 
 // ─── Home / Latest ────────────────────────────────────────────────────────────
-const HOME_PAGE_SIZE = 21; // fixed SFW results per page
+const HOME_PAGE_SIZE = 21; // fixed results per page
+
+// Fetch up to `count` server pages starting at `startPage` in parallel,
+// then collect items that pass `predicate` until we have `needed` of them.
+// Returns { items, lastFetched } where lastFetched is the last page number used.
+async function fetchParallelPages(endpoint, startPage, count, needed, predicate) {
+  const pageNums = Array.from({ length: count }, (_, i) => startPage + i);
+  const pages = await Promise.all(
+    pageNums.map(p => apiFetch(`${endpoint}${p}`).catch(() => null))
+  );
+
+  const collected = [];
+  const seenSlugs = new Set();
+  let lastFetched = startPage - 1;
+
+  for (let i = 0; i < pages.length; i++) {
+    const data = pages[i];
+    lastFetched = startPage + i;
+    if (!data || !data.results || data.results.length === 0) break;
+
+    for (const item of data.results) {
+      if (seenSlugs.has(item.slug)) continue;
+      seenSlugs.add(item.slug);
+      if (predicate(item)) {
+        collected.push(item);
+        if (collected.length >= needed) return { items: collected, lastFetched };
+      }
+    }
+  }
+
+  return { items: collected, lastFetched };
+}
 
 async function loadHome(page = 1) {
   showLoading();
@@ -515,128 +575,63 @@ async function loadHome(page = 1) {
     // Determine which server page to start from
     let serverStartPage;
     if (page === 1) {
-      // Fresh start
       serverStartPage = 1;
       state.homeServerPageHistory = [1];
     } else if (page > state.homePage) {
-      // Going forward — start from where last page ended
       serverStartPage = state.homeNextServerPage;
       state.homeServerPageHistory.push(serverStartPage);
     } else {
-      // Going backward — rewind to the server page that started the target page
       state.homeServerPageHistory = state.homeServerPageHistory.slice(0, page);
       serverStartPage = state.homeServerPageHistory[page - 1] || 1;
     }
 
-    // For 'all' filter: collect exactly HOME_PAGE_SIZE items (no filtering)
-    if (state.homeFilter === 'all') {
-      const allCollected = [];
-      const seenSlugs = new Set();
-      let lastFetched = serverStartPage - 1;
+    // Predicates for each filter mode
+    const predicates = {
+      'all':  ()    => true,
+      '18+':  item  => !!(item.badge && item.badge.includes('18+')),
+      'sfw':  item  => !item.badge || !item.badge.includes('18+'),
+    };
+    const predicate = predicates[state.homeFilter] || predicates['sfw'];
 
-      while (allCollected.length < HOME_PAGE_SIZE && lastFetched < serverStartPage + 15) {
-        lastFetched++;
-        try {
-          const data = await apiFetch(`/api/latest?page=${lastFetched}`);
-          if (!data.results || data.results.length === 0) break;
+    // Fetch 5 server pages in parallel — enough to fill 21 SFW items even on
+    // a page with a high density of 18+ titles.
+    const PARALLEL_PAGES = 5;
+    const { items, lastFetched } = await fetchParallelPages(
+      '/api/latest?page=',
+      serverStartPage,
+      PARALLEL_PAGES,
+      HOME_PAGE_SIZE,
+      predicate
+    );
 
-          for (const item of data.results) {
-            if (seenSlugs.has(item.slug)) continue;
-            seenSlugs.add(item.slug);
-            allCollected.push(item);
-            if (allCollected.length >= HOME_PAGE_SIZE) break;
-          }
-        } catch {
-          break;
-        }
-      }
-
-      state.homePage = page;
-      state.homeResults = allCollected;
-      state.homeNextServerPage = lastFetched + 1;
-
-      renderGrid('home-grid', allCollected);
-      $$('.filter-chip').forEach(chip => {
-        chip.classList.toggle('active', chip.dataset.filter === state.homeFilter);
-      });
-      $('#home-prev').disabled = page <= 1;
-      $('#home-next').disabled = allCollected.length === 0;
-      $('#home-page-info').textContent = `Page ${page}`;
-      return;
-    }
-
-    // For '18+' filter: collect exactly HOME_PAGE_SIZE 18+ items
-    if (state.homeFilter === '18+') {
-      const adultCollected = [];
-      const seenSlugs = new Set();
-      let lastFetched = serverStartPage - 1;
-
-      while (adultCollected.length < HOME_PAGE_SIZE && lastFetched < serverStartPage + 15) {
-        lastFetched++;
-        try {
-          const data = await apiFetch(`/api/latest?page=${lastFetched}`);
-          if (!data.results || data.results.length === 0) break;
-
-          for (const item of data.results) {
-            if (seenSlugs.has(item.slug)) continue;
-            seenSlugs.add(item.slug);
-            const isAdult = item.badge && item.badge.includes('18+');
-            if (isAdult) adultCollected.push(item);
-            if (adultCollected.length >= HOME_PAGE_SIZE) break;
-          }
-        } catch {
-          break;
-        }
-      }
-
-      state.homePage = page;
-      state.homeResults = adultCollected;
-      state.homeNextServerPage = lastFetched + 1;
-
-      renderGrid('home-grid', adultCollected);
-      $$('.filter-chip').forEach(chip => {
-        chip.classList.toggle('active', chip.dataset.filter === state.homeFilter);
-      });
-      $('#home-prev').disabled = page <= 1;
-      $('#home-next').disabled = adultCollected.length === 0;
-      $('#home-page-info').textContent = `Page ${page}`;
-      return;
-    }
-
-    // SFW mode: collect exactly HOME_PAGE_SIZE SFW items across as many server pages as needed
-    const sfwCollected = [];
-    const seenSlugs = new Set();
-    let lastFetched = serverStartPage - 1;
-
-    while (sfwCollected.length < HOME_PAGE_SIZE && lastFetched < serverStartPage + 15) {
-      lastFetched++;
+    // If we still don't have enough, fetch more pages sequentially as a fallback
+    let collected = items;
+    let cursor = lastFetched;
+    while (collected.length < HOME_PAGE_SIZE && cursor < serverStartPage + 15) {
+      cursor++;
       try {
-        const data = await apiFetch(`/api/latest?page=${lastFetched}`);
+        const data = await apiFetch(`/api/latest?page=${cursor}`);
         if (!data.results || data.results.length === 0) break;
-
         for (const item of data.results) {
-          if (seenSlugs.has(item.slug)) continue;
-          seenSlugs.add(item.slug);
-          const isSfw = !item.badge || !item.badge.includes('18+');
-          if (isSfw) sfwCollected.push(item);
-          if (sfwCollected.length >= HOME_PAGE_SIZE) break;
+          if (collected.some(c => c.slug === item.slug)) continue;
+          if (predicate(item)) {
+            collected.push(item);
+            if (collected.length >= HOME_PAGE_SIZE) break;
+          }
         }
-      } catch {
-        break;
-      }
+      } catch { break; }
     }
 
     state.homePage = page;
-    state.homeResults = sfwCollected;
-    state.homeNextServerPage = lastFetched + 1;
+    state.homeResults = collected;
+    state.homeNextServerPage = cursor + 1;
 
-    renderGrid('home-grid', sfwCollected);
+    renderGrid('home-grid', collected);
     $$('.filter-chip').forEach(chip => {
       chip.classList.toggle('active', chip.dataset.filter === state.homeFilter);
     });
-
     $('#home-prev').disabled = page <= 1;
-    $('#home-next').disabled = sfwCollected.length === 0;
+    $('#home-next').disabled = collected.length === 0;
     $('#home-page-info').textContent = `Page ${page}`;
   } catch (err) {
     $('#home-grid').innerHTML = `<div class="error-box"><p>Failed to load: ${escHtml(err.message)}</p><button class="retry-btn" onclick="loadHome(${page})">Retry</button></div>`;
@@ -674,38 +669,49 @@ async function loadBrowse(page = 1) {
       serverStartPage = state.browseServerPageHistory[page - 1] || 1;
     }
 
-    const collected = [];
-    const seenSlugs = new Set();
-    let lastFetched = serverStartPage - 1;
+    const ratingPredicate = (item) => {
+      if (!state.browseRating) return true;
+      if (state.browseRating === '18+') return !!(item.badge && item.badge.includes('18+'));
+      if (state.browseRating === 'sfw')  return !item.badge || !item.badge.includes('18+');
+      return true;
+    };
+
+    const baseEndpoint = `/api/browse?order=${state.browseOrder}&genre=${state.browseGenre}&page=`;
+
+    // Fetch 5 server pages in parallel
+    const PARALLEL_PAGES = 5;
+    const { items, lastFetched } = await fetchParallelPages(
+      baseEndpoint,
+      serverStartPage,
+      PARALLEL_PAGES,
+      BROWSE_PAGE_SIZE,
+      ratingPredicate
+    );
+
+    // Sequential fallback if parallel batch wasn't enough
+    let collected = items;
+    let cursor = lastFetched;
     let reachedEnd = false;
-
-    while (collected.length < BROWSE_PAGE_SIZE && lastFetched < serverStartPage + 20) {
-      lastFetched++;
+    while (collected.length < BROWSE_PAGE_SIZE && cursor < serverStartPage + 20) {
+      cursor++;
       try {
-        const data = await apiFetch(`/api/browse?page=${lastFetched}&order=${state.browseOrder}&genre=${state.browseGenre}`);
+        const data = await apiFetch(`${baseEndpoint}${cursor}`);
         if (!data.results || data.results.length === 0) { reachedEnd = true; break; }
-
         for (const item of data.results) {
-          if (seenSlugs.has(item.slug)) continue;
-          seenSlugs.add(item.slug);
-          const passesRating =
-            !state.browseRating ||
-            (state.browseRating === '18+' && item.badge && item.badge.includes('18+')) ||
-            (state.browseRating === 'sfw'  && (!item.badge || !item.badge.includes('18+')));
-          if (passesRating) collected.push(item);
-          if (collected.length >= BROWSE_PAGE_SIZE) break;
+          if (collected.some(c => c.slug === item.slug)) continue;
+          if (ratingPredicate(item)) {
+            collected.push(item);
+            if (collected.length >= BROWSE_PAGE_SIZE) break;
+          }
         }
-      } catch {
-        reachedEnd = true;
-        break;
-      }
+      } catch { reachedEnd = true; break; }
     }
 
     state.browsePage = page;
-    state.browseNextServerPage = lastFetched + 1;
+    state.browseNextServerPage = cursor + 1;
 
     renderGrid('browse-grid', collected);
-    updatePageControls('browse', page, 0); // totalPages unknown; use button state instead
+    updatePageControls('browse', page, 0);
     $('#browse-prev-bottom').disabled = page <= 1;
     $('#browse-next-bottom').disabled = reachedEnd && collected.length < BROWSE_PAGE_SIZE;
   } catch (err) {
