@@ -2760,6 +2760,7 @@ body #main-content {
 #auth-nav-area {
   position: relative;
   display: flex;
+  margin-left: auto;
   align-items: center;
 }
 
