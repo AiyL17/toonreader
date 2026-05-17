@@ -1830,7 +1830,14 @@ $('#mobile-auth-logout-btn').addEventListener('click', async () => {
 // Notification toggle — desktop dropdown
 $('#notif-toggle').addEventListener('change', async (e) => {
   if (e.target.checked) {
-    const ok = await subscribeToPush();
+    // Request permission immediately in the user gesture context
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
+      e.target.checked = false;
+      return;
+    }
+    const ok = await subscribeToPush(true); // pass true = permission already granted
     if (!ok) e.target.checked = false;
   } else {
     await unsubscribeFromPush();
@@ -1840,9 +1847,15 @@ $('#notif-toggle').addEventListener('change', async (e) => {
 // Notification toggle — mobile nav
 $('#mobile-notif-toggle').addEventListener('change', async (e) => {
   if (e.target.checked) {
-    const ok = await subscribeToPush();
+    // Request permission immediately in the user gesture context
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
+      e.target.checked = false;
+      return;
+    }
+    const ok = await subscribeToPush(true); // pass true = permission already granted
     if (!ok) e.target.checked = false;
-    // Sync state to desktop toggle too
     const desktopToggle = $('#notif-toggle');
     if (desktopToggle) desktopToggle.checked = !!ok;
   } else {
@@ -2021,7 +2034,7 @@ async function getPushSubscription() {
   return reg.pushManager.getSubscription();
 }
 
-async function subscribeToPush() {
+async function subscribeToPush(permissionAlreadyGranted = false) {
   if (!isPushSupported()) {
     showToast('Push notifications are not supported on this browser', 3000, 'error');
     return false;
@@ -2035,11 +2048,13 @@ async function subscribeToPush() {
     // Get VAPID public key from server
     const { key } = await fetch('/api/push/vapid-public-key').then(r => r.json());
 
-    // Request permission
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      showToast('Notification permission denied', 3000, 'error');
-      return false;
+    // Only request permission if not already handled by the caller
+    if (!permissionAlreadyGranted) {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
+        return false;
+      }
     }
 
     // Subscribe via service worker
