@@ -2,3 +2,20 @@ node_modules/
 .env
 debug_output.html
 start.bat
+
+# Setup scripts
+setup-github*.ps1
+check-github.ps1
+push-launcher.ps1
+do-push.ps1
+fix-history.ps1
+clean-tokens.ps1
+cleanup-repo.ps1
+generate-icons.js
+__clean.py
+
+# Database
+toonreader.db
+toonreader.db-shm
+toonreader.db-wal
+
