@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ToonReader</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <!-- Lucide icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c6af7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z'/><path d='M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'/></svg>" />
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="ToonReader" />
+  <meta name="theme-color" content="#7c6af7" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="site-header">
+      <div class="header-inner">
+        <a href="#" class="logo" id="logo-link">
+          <span class="logo-icon"><i data-lucide="book-open"></i></span>
+          <span class="logo-text">ToonReader</span>
+        </a>
+        <div class="search-bar" id="search-bar-wrapper">
+          <input type="text" id="search-input" placeholder="Search manga / manhwa..." autocomplete="off" />
+          <button id="search-btn" aria-label="Search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+          <div id="search-suggestions" class="search-suggestions hidden" role="listbox" aria-label="Search suggestions"></div>
+        </div>
+        <nav class="header-nav">
+          <button class="nav-btn active" data-view="home">Home</button>
+          <button class="nav-btn" data-view="browse">Browse</button>
+          <button class="nav-btn" data-view="favorites"><i data-lucide="star"></i> <span class="nav-label">Favorites</span></button>
+          <button class="nav-btn" id="history-btn" data-view="history"><i data-lucide="history"></i> <span class="nav-label">History</span></button>
+          <div id="auth-nav-area">
+            <button id="auth-login-btn" class="nav-btn auth-login-nav-btn"><i data-lucide="log-in"></i> <span class="nav-label">Sign In</span></button>
+            <div id="auth-user-menu" class="hidden">
+              <button id="auth-user-btn" class="nav-btn auth-user-nav-btn">
+                <i data-lucide="user-circle"></i>
+                <span id="auth-username-display"></span>
+              </button>
+              <div id="auth-dropdown" class="hidden">
+                <button id="auth-logout-btn"><i data-lucide="log-out"></i> Sign Out</button>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </div>
+      <!-- Burger sits outside header-inner so it's not affected by the blur -->
+      <button id="burger-btn" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <!-- Mobile nav drawer -->
+      <div id="mobile-nav" aria-hidden="true">
+        <div id="mobile-nav-header">
+          <span class="logo">
+            <span class="logo-icon"><i data-lucide="book-open"></i></span>
+            <span class="logo-text">ToonReader</span>
+          </span>
+          <button id="mobile-nav-close" aria-label="Close menu">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div id="mobile-nav-links">
+          <button class="mobile-nav-btn" data-view="home"><i data-lucide="home"></i> Home</button>
+          <button class="mobile-nav-btn" data-view="browse"><i data-lucide="layout-grid"></i> Browse</button>
+          <button class="mobile-nav-btn" data-view="favorites"><i data-lucide="star"></i> Favorites</button>
+          <button class="mobile-nav-btn" data-view="history"><i data-lucide="history"></i> History</button>
+          <div class="mobile-nav-divider"></div>
+          <!-- Auth — guest state -->
+          <button id="mobile-auth-login-btn" class="mobile-nav-btn mobile-nav-auth-btn">
+            <i data-lucide="log-in"></i> Sign In / Register
+          </button>
+          <!-- Auth — logged in state -->
+          <div id="mobile-auth-user" class="hidden">
+            <div class="mobile-nav-user-info">
+              <i data-lucide="user-circle"></i>
+              <span id="mobile-auth-username"></span>
+            </div>
+            <button id="mobile-auth-logout-btn" class="mobile-nav-btn mobile-nav-logout-btn">
+              <i data-lucide="log-out"></i> Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="mobile-nav-backdrop" aria-hidden="true"></div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="main-content">
+
+      <!-- Home View -->
+      <div id="view-home" class="view active">
+        <div class="view-header">
+          <h2>Latest Updates</h2>
+          <div class="home-filters">
+            <button class="filter-chip" data-filter="all">All</button>
+            <button class="filter-chip" data-filter="18+"><i data-lucide="shield-alert"></i> 18+</button>
+            <button class="filter-chip active" data-filter="sfw">SFW Only</button>
+          </div>
+        </div>
+        <div id="home-grid" class="manga-grid"></div>
+        <div class="bottom-page-controls">
+          <button id="home-prev" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev</button>
+          <span id="home-page-info">Page 1</span>
+          <button id="home-next" class="page-btn">Next <i data-lucide="chevron-right"></i></button>
+        </div>
+      </div>
+
+      <!-- Browse View -->
+      <div id="view-browse" class="view">
+        <div class="view-header">
+          <h2>Browse All</h2>
+          <button id="browse-filter-toggle" class="browse-filter-toggle-btn" aria-expanded="false" aria-controls="browse-filters-panel">
+            <i data-lucide="sliders-horizontal"></i> Filters
+          </button>
+          <div id="browse-filters-panel" class="browse-filters-panel">
+            <div class="browse-filters">
+              <select id="browse-order">
+                <option value="latest">Latest</option>
+                <option value="alphabet">A-Z</option>
+                <option value="rating">Top Rated</option>
+                <option value="trending">Trending</option>
+                <option value="views">Most Views</option>
+                <option value="new-manga">New</option>
+              </select>
+              <select id="browse-rating">
+                <option value="">All Ratings</option>
+                <option value="18+">18+ Only</option>
+                <option value="sfw">SFW Only</option>
+              </select>
+              <select id="browse-genre">
+                <option value="">All Series</option>
+                <option value="webtoons">Webtoons</option>
+                <option value="manhwa">Manhwa</option>
+                <option value="manhua">Manhua</option>
+                <option value="uncensored">Uncensored</option>
+                <option value="full-color">Full Color</option>
+                <option value="doujinshi">Doujinshi</option>
+                <option value="one-shot">One Shot</option>
+                <option value="action">Action</option>
+                <option value="adventure">Adventure</option>
+                <option value="comedy">Comedy</option>
+                <option value="drama">Drama</option>
+                <option value="ecchi">Ecchi</option>
+                <option value="explicit-sex">Explicit Sex</option>
+                <option value="fantasy">Fantasy</option>
+                <option value="fetish">Fetish</option>
+                <option value="harem">Harem</option>
+                <option value="historical">Historical</option>
+                <option value="horror">Horror</option>
+                <option value="martial-arts">Martial Arts</option>
+                <option value="mature">Mature</option>
+                <option value="mystery">Mystery</option>
+                <option value="psychological">Psychological</option>
+                <option value="romance">Romance</option>
+                <option value="school-life">School Life</option>
+                <option value="sci-fi">Sci-Fi</option>
+                <option value="sexual-content">Sexual Content</option>
+                <option value="slice-of-life">Slice of Life</option>
+                <option value="smut">Smut</option>
+                <option value="supernatural">Supernatural</option>
+                <option value="thriller">Thriller</option>
+              </select>
+              <button id="browse-apply-btn" class="browse-apply-btn"><i data-lucide="filter"></i> Apply</button>
+            </div>
+          </div>
+        </div>
+        <div id="browse-grid" class="manga-grid"></div>
+        <div class="bottom-page-controls">
+          <button id="browse-prev-bottom" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev</button>
+          <span id="browse-page-info-bottom">Page 1</span>
+          <button id="browse-next-bottom" class="page-btn">Next <i data-lucide="chevron-right"></i></button>
+        </div>
+      </div>
+
+      <!-- Search Results View -->
+      <div id="view-search" class="view">
+        <div class="view-header">
+          <h2>Search Results: <span id="search-query-label"></span></h2>
+          <div class="page-controls">
+            <button id="search-prev" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev</button>
+            <span id="search-page-info">Page 1</span>
+            <button id="search-next" class="page-btn">Next <i data-lucide="chevron-right"></i></button>
+          </div>
+        </div>
+        <div id="search-grid" class="manga-grid"></div>
+      </div>
+
+      <!-- Manga Detail View -->
+      <div id="view-manga" class="view">
+        <div id="manga-detail"></div>
+      </div>
+
+      <!-- Chapter Reader View -->
+      <div id="view-reader" class="view">
+        <div id="reader-toolbar">
+          <button id="reader-back" class="toolbar-btn"><i data-lucide="arrow-left"></i> Back</button>
+          <div id="reader-title-info">
+            <span id="reader-manga-title"></span>
+            <span id="reader-chapter-title"></span>
+          </div>
+          <div class="reader-controls">
+            <button id="reader-prev-ch" class="toolbar-btn" disabled><i data-lucide="chevron-left"></i> Prev Ch</button>
+            <div class="chapter-dropdown-wrap" id="chapter-dropdown-wrap">
+              <button id="chapter-dropdown-btn" class="toolbar-btn chapter-dropdown-btn" aria-haspopup="listbox" aria-expanded="false">
+                <i data-lucide="list"></i> Chapters <i data-lucide="chevron-down" id="chapter-dropdown-chevron"></i>
+              </button>
+              <div id="chapter-dropdown-list" class="chapter-dropdown-list hidden" role="listbox" aria-label="Chapter list"></div>
+            </div>
+            <button id="reader-next-ch" class="toolbar-btn" disabled>Next Ch <i data-lucide="chevron-right"></i></button>
+          </div>
+          <button id="reader-settings-btn" class="toolbar-btn"><i data-lucide="settings"></i></button>
+        </div>
+        <div id="reader-settings-panel" class="hidden">
+          <label>Width: <input type="range" id="img-width-slider" min="40" max="100" value="75" /> <span id="img-width-val">75%</span></label>
+          <label>
+            <input type="checkbox" id="single-page-mode" /> Single page mode
+          </label>
+        </div>
+        <div id="reader-content"></div>
+        <div id="reader-bottom-nav">
+          <button id="reader-prev-ch-bottom" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev Chapter</button>
+          <button id="reader-home-btn" class="page-btn reader-home-btn"><i data-lucide="book-open"></i> ToonReader</button>
+          <button id="reader-next-ch-bottom" class="page-btn" disabled>Next Chapter <i data-lucide="chevron-right"></i></button>
+        </div>
+      </div>
+
+      <!-- Favorites View -->
+      <div id="view-favorites" class="view">
+        <div class="view-header">
+          <h2><i data-lucide="star"></i> Favorites</h2>
+          <button id="clear-favorites-btn" class="danger-btn">Clear All</button>
+        </div>
+        <div id="favorites-list"></div>
+        <p id="favorites-empty" class="empty-msg hidden">No favorites yet. Bookmark manga from any card or detail page.</p>
+        <div class="bottom-page-controls" id="fav-bottom-controls">
+          <button id="fav-prev-bottom" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev</button>
+          <span id="fav-page-info-bottom">Page 1</span>
+          <button id="fav-next-bottom" class="page-btn">Next <i data-lucide="chevron-right"></i></button>
+        </div>
+      </div>
+
+      <!-- History View -->
+      <div id="view-history" class="view">
+        <div class="view-header">
+          <h2>Reading History</h2>
+          <button id="clear-history-btn" class="danger-btn">Clear All</button>
+        </div>
+        <div id="history-grid" class="manga-grid"></div>
+        <p id="history-empty" class="empty-msg hidden">No reading history yet. Start reading!</p>
+        <div class="bottom-page-controls" id="history-bottom-controls">
+          <button id="history-prev-bottom" class="page-btn" disabled><i data-lucide="chevron-left"></i> Prev</button>
+          <span id="history-page-info-bottom">Page 1</span>
+          <button id="history-next-bottom" class="page-btn">Next <i data-lucide="chevron-right"></i></button>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer id="site-footer">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-logo">
+            <i data-lucide="book-open"></i>
+            <span>ToonReader</span>
+          </span>
+          <p class="footer-tagline">Your go-to reader for manga, manhwa &amp; manhua.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer navigation">
+          <div class="footer-col">
+            <h4>Browse</h4>
+            <button class="footer-nav-btn" data-view="home">Latest Updates</button>
+            <button class="footer-nav-btn" data-view="browse">All Series</button>
+            <button class="footer-nav-btn" data-view="favorites">Favorites</button>
+            <button class="footer-nav-btn" data-view="history">Reading History</button>
+          </div>
+          <div class="footer-col">
+            <h4>Account</h4>
+            <button class="footer-nav-btn" id="footer-signin-btn">Sign In</button>
+            <button class="footer-nav-btn" id="footer-register-btn">Register</button>
+          </div>
+        </nav>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; <span id="footer-year"></span> ToonReader. All content belongs to their respective owners.</p>
+        <p class="footer-disclaimer">ToonReader does not host any manga content. All titles are sourced from third-party sites.</p>
+      </div>
+    </footer>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="hidden">
+      <div class="loader-wrap">
+        <div class="loader-book">
+          <div class="loader-book__page loader-book__page--1"></div>
+          <div class="loader-book__page loader-book__page--2"></div>
+          <div class="loader-book__page loader-book__page--3"></div>
+          <div class="loader-book__spine"></div>
+        </div>
+        <div class="loader-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <p class="loader-text">Loading...</p>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden"></div>
+
+    <!-- Auth Modal -->
+    <div id="auth-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div id="auth-dialog">
+        <div id="auth-logo">
+          <i data-lucide="book-open"></i>
+          <span>ToonReader</span>
+        </div>
+        <div id="auth-tabs">
+          <button class="auth-tab active" data-tab="login">Sign In</button>
+          <button class="auth-tab" data-tab="register">Register</button>
+        </div>
+
+        <!-- Login Form -->
+        <form id="auth-login-form" class="auth-form" autocomplete="on">
+          <div class="auth-field">
+            <label for="login-username">Username</label>
+            <input type="text" id="login-username" name="username" placeholder="Enter your username" autocomplete="username" required />
+          </div>
+          <div class="auth-field">
+            <label for="login-password">Password</label>
+            <div class="auth-password-wrap">
+              <input type="password" id="login-password" name="password" placeholder="Enter your password" autocomplete="current-password" required />
+              <button type="button" class="auth-eye-btn" data-target="login-password" aria-label="Toggle password visibility">
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+          </div>
+          <div class="auth-remember-row">
+            <label class="auth-remember-label">
+              <input type="checkbox" id="login-remember" name="remember" />
+              <span>Remember me</span>
+            </label>
+          </div>
+          <p class="auth-error hidden" id="login-error"></p>
+          <button type="submit" class="auth-submit-btn">Sign In</button>
+        </form>
+
+        <!-- Register Form -->
+        <form id="auth-register-form" class="auth-form hidden" autocomplete="on">
+          <div class="auth-field">
+            <label for="reg-username">Username</label>
+            <input type="text" id="reg-username" name="username" placeholder="Choose a username" autocomplete="username" required />
+            <span class="auth-hint">3–30 characters, letters/numbers/underscores only</span>
+          </div>
+          <div class="auth-field">
+            <label for="reg-password">Password</label>
+            <div class="auth-password-wrap">
+              <input type="password" id="reg-password" name="password" placeholder="Choose a password" autocomplete="new-password" required />
+              <button type="button" class="auth-eye-btn" data-target="reg-password" aria-label="Toggle password visibility">
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+            <span class="auth-hint">At least 6 characters</span>
+          </div>
+          <div class="auth-field">
+            <label for="reg-confirm">Confirm Password</label>
+            <div class="auth-password-wrap">
+              <input type="password" id="reg-confirm" name="confirm" placeholder="Repeat your password" autocomplete="new-password" required />
+              <button type="button" class="auth-eye-btn" data-target="reg-confirm" aria-label="Toggle password visibility">
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+          </div>
+          <p class="auth-error hidden" id="register-error"></p>
+          <button type="submit" class="auth-submit-btn">Create Account</button>
+        </form>
+      </div>
+    </div>
+    <div id="confirm-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div id="confirm-dialog">
+        <div id="confirm-icon"><i data-lucide="alert-triangle"></i></div>
+        <h3 id="confirm-title"></h3>
+        <p id="confirm-message"></p>
+        <div id="confirm-actions">
+          <button id="confirm-cancel-btn" class="confirm-btn confirm-btn--cancel">Cancel</button>
+          <button id="confirm-ok-btn" class="confirm-btn confirm-btn--danger">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scroll to Top Button -->
+    <button id="scroll-top-btn" aria-label="Scroll to top" title="Scroll to top">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+    </button>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script>lucide.createIcons();</script>
+  <script>
+    // Register service worker for PWA / offline support
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .catch(err => console.warn('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
