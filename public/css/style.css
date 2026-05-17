@@ -1759,20 +1759,17 @@ img { display: block; max-width: 100%; }
   justify-content: center;
   gap: 5px;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: var(--radius-sm);
   padding: 7px 8px;
   cursor: pointer;
   flex-shrink: 0;
-  transition: border-color var(--transition);
   position: absolute;
   right: 14px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 401;
 }
-
-#burger-btn:hover { border-color: var(--accent); }
 
 #burger-btn span {
   display: block;
@@ -1831,8 +1828,8 @@ img { display: block; max-width: 100%; }
 }
 
 #mobile-nav-close {
-  background: var(--bg3);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   color: var(--text2);
   width: 32px;
   height: 32px;
@@ -1841,12 +1838,11 @@ img { display: block; max-width: 100%; }
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all var(--transition);
+  transition: color var(--transition);
   flex-shrink: 0;
 }
 
 #mobile-nav-close:hover {
-  border-color: var(--accent);
   color: var(--text);
 }
 
