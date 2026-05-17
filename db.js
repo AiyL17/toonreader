@@ -54,21 +54,6 @@ db.exec(`
     chapter_title TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(user_id, slug)
   );
-
-  CREATE TABLE IF NOT EXISTS push_subscriptions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    endpoint   TEXT    NOT NULL UNIQUE,
-    p256dh     TEXT    NOT NULL,
-    auth       TEXT    NOT NULL,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch())
-  );
-
-  CREATE TABLE IF NOT EXISTS manga_chapter_cache (
-    slug           TEXT    NOT NULL PRIMARY KEY,
-    latest_chapter TEXT    NOT NULL DEFAULT '',
-    checked_at     INTEGER NOT NULL DEFAULT (unixepoch())
-  );
 `);
 
 module.exports = db;

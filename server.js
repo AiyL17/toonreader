@@ -10,16 +10,10 @@ const compression = require('compression');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
-const webpush    = require('web-push');
 const db         = require('./db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'toonreader-secret-change-in-production';
 const JWT_EXPIRY = '30d';
-
-// ─── VAPID setup ──────────────────────────────────────────────────────────────
-const VAPID_PUBLIC  = process.env.VAPID_PUBLIC  || 'BOWAoNLXDhh-0GUP6qixQaRoDdaQGAqbfMNw0CBqRSkE8clkA_N7R6fj0hXQVJQN52bn_MoSbvt8HooZlkfk_FA';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'TGWVOccP4emDT_JMY2aKhkmI_TX6IsvVMBzKHQXnZzI';
-webpush.setVapidDetails('mailto:toonreader@localhost', VAPID_PUBLIC, VAPID_PRIVATE);
 
 const app = express();
 
@@ -621,118 +615,6 @@ app.get('/api/image', async (req, res) => {
   }
 });
 
-// ─── API: Push — VAPID public key ────────────────────────────────────────────
-app.get('/api/push/vapid-public-key', (req, res) => {
-  res.json({ key: VAPID_PUBLIC });
-});
-
-// ─── API: Push — Subscribe ────────────────────────────────────────────────────
-app.post('/api/push/subscribe', requireAuth, (req, res) => {
-  const { endpoint, keys } = req.body || {};
-  if (!endpoint || !keys?.p256dh || !keys?.auth)
-    return res.status(400).json({ error: 'Invalid subscription object' });
-
-  db.prepare(`
-    INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth
-  `).run(req.user.id, endpoint, keys.p256dh, keys.auth);
-
-  res.json({ ok: true });
-});
-
-// ─── API: Push — Unsubscribe ──────────────────────────────────────────────────
-app.post('/api/push/unsubscribe', requireAuth, (req, res) => {
-  const { endpoint } = req.body || {};
-  if (!endpoint) return res.status(400).json({ error: 'Endpoint required' });
-  db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?')
-    .run(req.user.id, endpoint);
-  res.json({ ok: true });
-});
-
-// ─── Background: Chapter update checker ──────────────────────────────────────
-const CHECK_INTERVAL_MS = 30 * 60 * 1000; // every 30 minutes
-
-async function checkForUpdates() {
-  try {
-    // Get all unique bookmarked slugs that have at least one push subscriber
-    const rows = db.prepare(`
-      SELECT DISTINCT b.slug, b.title, b.link
-      FROM bookmarks b
-      INNER JOIN push_subscriptions ps ON ps.user_id = b.user_id
-    `).all();
-
-    if (rows.length === 0) return;
-
-    for (const { slug, title, link } of rows) {
-      try {
-        const url  = `${BASE_URL}/series/${slug}/`;
-        const html = await axiosInstance.get(url).then(r => r.data);
-        const $    = cheerio.load(html);
-
-        // Get the latest chapter title
-        const latestChapter = $('.wp-manga-chapter').first().find('a').text().trim();
-        if (!latestChapter) continue;
-
-        // Check against cached value
-        const cached = db.prepare('SELECT latest_chapter FROM manga_chapter_cache WHERE slug = ?').get(slug);
-
-        if (!cached) {
-          // First time seeing this slug — just store it, don't notify
-          db.prepare(`
-            INSERT INTO manga_chapter_cache (slug, latest_chapter, checked_at)
-            VALUES (?, ?, unixepoch())
-            ON CONFLICT(slug) DO UPDATE SET latest_chapter=excluded.latest_chapter, checked_at=unixepoch()
-          `).run(slug, latestChapter);
-          continue;
-        }
-
-        if (cached.latest_chapter === latestChapter) continue; // no update
-
-        // New chapter found — update cache
-        db.prepare(`
-          UPDATE manga_chapter_cache SET latest_chapter = ?, checked_at = unixepoch() WHERE slug = ?
-        `).run(latestChapter, slug);
-
-        // Find all subscribers who bookmarked this slug
-        const subscribers = db.prepare(`
-          SELECT ps.endpoint, ps.p256dh, ps.auth
-          FROM push_subscriptions ps
-          INNER JOIN bookmarks b ON b.user_id = ps.user_id
-          WHERE b.slug = ?
-        `).all(slug);
-
-        const payload = JSON.stringify({
-          title: title || slug,
-          body:  `New chapter: ${latestChapter}`,
-          url:   link || `/?manga=${slug}`,
-          slug,
-        });
-
-        for (const sub of subscribers) {
-          try {
-            await webpush.sendNotification(
-              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-              payload
-            );
-          } catch (err) {
-            // Subscription expired or invalid — remove it
-            if (err.statusCode === 410 || err.statusCode === 404) {
-              db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(sub.endpoint);
-            }
-          }
-        }
-
-        console.log(`[push] New chapter for "${title}": ${latestChapter} — notified ${subscribers.length} subscriber(s)`);
-      } catch {
-        // Silently skip individual manga fetch errors
-      }
-    }
-  } catch (err) {
-    console.error('[push] Chapter check error:', err.message);
-  }
-}
-
 // ─── Serve frontend ───────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -746,9 +628,4 @@ app.listen(PORT, () => {
   console.log('Prefetching home pages 1-5...');
   for (let p = 1; p <= 5; p++) prefetch(p);
   console.log('Prefetch started in background.');
-
-  // Start chapter update checker
-  setTimeout(checkForUpdates, 60 * 1000); // first check after 1 min
-  setInterval(checkForUpdates, CHECK_INTERVAL_MS);
-  console.log('Chapter update checker started (every 30 min).');
 });

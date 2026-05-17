@@ -1827,44 +1827,6 @@ $('#mobile-auth-logout-btn').addEventListener('click', async () => {
   if (!$('#home-grid').children.length) loadHome(1);
 });
 
-// Notification toggle — desktop dropdown
-$('#notif-toggle').addEventListener('change', async (e) => {
-  if (e.target.checked) {
-    // Request permission immediately in the user gesture context
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
-      e.target.checked = false;
-      return;
-    }
-    const ok = await subscribeToPush(true); // pass true = permission already granted
-    if (!ok) e.target.checked = false;
-  } else {
-    await unsubscribeFromPush();
-  }
-});
-
-// Notification toggle — mobile nav
-$('#mobile-notif-toggle').addEventListener('change', async (e) => {
-  if (e.target.checked) {
-    // Request permission immediately in the user gesture context
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
-      e.target.checked = false;
-      return;
-    }
-    const ok = await subscribeToPush(true); // pass true = permission already granted
-    if (!ok) e.target.checked = false;
-    const desktopToggle = $('#notif-toggle');
-    if (desktopToggle) desktopToggle.checked = !!ok;
-  } else {
-    await unsubscribeFromPush();
-    const desktopToggle = $('#notif-toggle');
-    if (desktopToggle) desktopToggle.checked = false;
-  }
-});
-
 // User menu dropdown toggle
 authUserBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1918,7 +1880,6 @@ authLoginForm.addEventListener('submit', async (e) => {
     setAuthUser(data.user);
     hideAuthModal();
     await syncFromServer();
-    await initPushToggle();
     showToast(`Welcome back, ${data.user.username}!`, 3000, 'success');
     showView('home');
     if (!$('#home-grid').children.length) loadHome(1);
@@ -1955,7 +1916,6 @@ authRegisterForm.addEventListener('submit', async (e) => {
     hideAuthModal();
     // Push existing localStorage data to server for new account
     await syncToServer();
-    await initPushToggle();
     showToast(`Account created! Welcome, ${data.user.username}!`, 3000, 'success');
     showView('home');
     if (!$('#home-grid').children.length) loadHome(1);
@@ -2021,160 +1981,6 @@ async function syncFromServer() {
   }
 }
 
-// ─── Push Notifications ───────────────────────────────────────────────────────
-let pushSubscription = null;
-
-function isPushSupported() {
-  return 'serviceWorker' in navigator && 'PushManager' in window;
-}
-
-async function getPushSubscription() {
-  if (!isPushSupported()) return null;
-  const reg = await navigator.serviceWorker.ready;
-  return reg.pushManager.getSubscription();
-}
-
-async function subscribeToPush(permissionAlreadyGranted = false) {
-  if (!isPushSupported()) {
-    showToast('Push notifications are not supported on this browser', 3000, 'error');
-    return false;
-  }
-  if (!state.user) {
-    showToast('Sign in to enable notifications', 3000, 'error');
-    return false;
-  }
-
-  try {
-    // Get VAPID public key from server
-    const { key } = await fetch('/api/push/vapid-public-key').then(r => r.json());
-
-    // Only request permission if not already handled by the caller
-    if (!permissionAlreadyGranted) {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        showToast('Notification permission denied. Enable it in browser settings.', 4000, 'error');
-        return false;
-      }
-    }
-
-    // Subscribe via service worker
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key),
-    });
-
-    // Save subscription to server
-    await fetch('/api/push/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sub.toJSON()),
-    });
-
-    pushSubscription = sub;
-    localStorage.setItem('pushEnabled', '1');
-    updateNotifToggleUI(true);
-    showToast('Notifications enabled', 3000, 'success');
-    return true;
-  } catch (err) {
-    console.error('Push subscribe error:', err);
-    showToast('Could not enable notifications', 3000, 'error');
-    return false;
-  }
-}
-
-async function unsubscribeFromPush() {
-  try {
-    const sub = await getPushSubscription();
-    if (sub) {
-      await fetch('/api/push/unsubscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint: sub.endpoint }),
-      });
-      await sub.unsubscribe();
-    }
-    pushSubscription = null;
-    localStorage.removeItem('pushEnabled');
-    updateNotifToggleUI(false);
-    showToast('Notifications disabled', 3000, 'success');
-  } catch (err) {
-    console.error('Push unsubscribe error:', err);
-    showToast('Could not disable notifications', 3000, 'error');
-  }
-}
-
-function updateNotifToggleUI(enabled) {
-  const toggle       = $('#notif-toggle');
-  const label        = $('#notif-toggle-label');
-  const mobileToggle = $('#mobile-notif-toggle');
-  const mobileLabel  = $('#mobile-notif-toggle-label');
-  if (toggle) toggle.checked = enabled;
-  if (label)  label.textContent = enabled ? 'Notifications On' : 'Notifications Off';
-  if (mobileToggle) mobileToggle.checked = enabled;
-  if (mobileLabel)  mobileLabel.textContent = enabled ? 'Notifications On' : 'Notifications Off';
-}
-
-async function initPushToggle() {
-  if (!isPushSupported()) {
-    const wrap = $('#notif-toggle-wrap');
-    if (wrap) wrap.style.display = 'none';
-    return;
-  }
-  const sub = await getPushSubscription();
-  pushSubscription = sub;
-  updateNotifToggleUI(!!sub);
-}
-
-// Convert VAPID base64 key to Uint8Array
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw     = atob(base64);
-  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
-}
-
-// Handle notification click navigation from service worker
-navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (event) => {
-  if (event.data?.type === 'NAVIGATE' && event.data.url) {
-    window.location.href = event.data.url;
-  }
-  // New service worker activated — reload to get fresh assets
-  if (event.data?.type === 'SW_UPDATED') {
-    window.location.reload();
-  }
-});
-
-// ─── Version polling — auto-reload when a new build is deployed ──────────────
-(function initVersionCheck() {
-  const CURRENT_BUILD = document.documentElement.dataset.buildTime || '0';
-  const VERSION_URL   = '/version.json';
-  const CHECK_EVERY   = 5 * 60 * 1000; // check every 5 minutes
-
-  async function checkVersion() {
-    try {
-      const res  = await fetch(VERSION_URL + '?t=' + Date.now());
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.buildTime && String(data.buildTime) !== CURRENT_BUILD && CURRENT_BUILD !== '0') {
-        console.log('[version] New build detected, reloading...');
-        // Unregister SW so it re-installs fresh, then reload
-        if ('serviceWorker' in navigator) {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map(r => r.unregister()));
-        }
-        window.location.reload(true);
-      }
-    } catch { /* network error, try again next interval */ }
-  }
-
-  // Start polling after 30s (give the app time to load first)
-  setTimeout(() => {
-    checkVersion();
-    setInterval(checkVersion, CHECK_EVERY);
-  }, 30000);
-})();
-
 // ─── Footer ───────────────────────────────────────────────────────────────────
 $('#footer-year').textContent = new Date().getFullYear();
 
@@ -2212,7 +2018,6 @@ $('#footer-register-btn').addEventListener('click', () => showAuthModal('registe
       if (data.user) {
         setAuthUser(data.user);
         await syncFromServer();
-        await initPushToggle();
       }
     }
   } catch { /* network error, continue as guest */ }
