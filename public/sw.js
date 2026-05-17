@@ -4,7 +4,7 @@
    Handles push notifications for bookmarked manga chapter updates.
 ──────────────────────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = 'toonreader-shell-v2';
+const CACHE_NAME = 'toonreader-shell-v3';
 
 // Static assets that make up the app shell
 const SHELL_ASSETS = [
@@ -45,7 +45,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// ─── Fetch: network-first for API, cache-first for shell ─────────────────────
+// ─── Fetch: network-first for API and HTML, cache-first for static assets ────
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -55,12 +55,19 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for shell assets
+  // Always fetch index.html fresh so version stamp is never stale
+  if (url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // Cache-first for all other shell assets (css, js, icons)
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        // Cache successful GET responses for shell assets
         if (response.ok && event.request.method === 'GET') {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
