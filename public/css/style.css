@@ -2897,10 +2897,24 @@ body #main-content {
 
 /* ─── Footer ───────────────────────────────────────────────────────────────── */
 #site-footer {
-  background: var(--bg2);
-  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg2) 0%, #13131a 100%);
+  border-top: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
   margin-top: 60px;
-  padding: 48px 24px 0;
+  padding: 56px 24px 0;
+}
+
+/* Glowing accent line at the very top */
+#site-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 30%, var(--accent2) 70%, transparent 100%);
+  opacity: 0.7;
 }
 
 /* Hide footer entirely inside the reader view */
@@ -2916,7 +2930,7 @@ body.reader-active #site-footer {
   gap: 48px;
   justify-content: space-between;
   align-items: flex-start;
-  padding-bottom: 40px;
+  padding-bottom: 44px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -2924,15 +2938,15 @@ body.reader-active #site-footer {
 .footer-brand {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-width: 260px;
+  gap: 12px;
+  max-width: 280px;
 }
 
 .footer-logo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 1.15rem;
+  gap: 9px;
+  font-size: 1.2rem;
   font-weight: 700;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
@@ -2949,10 +2963,45 @@ body.reader-active #site-footer {
 }
 
 .footer-tagline {
-  font-size: 0.82rem;
+  font-size: 0.83rem;
   color: var(--text2);
-  line-height: 1.6;
+  line-height: 1.65;
   margin: 0;
+}
+
+/* Social icons row */
+.footer-socials {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.footer-social-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.footer-social-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.footer-social-btn:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent2);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--accent-glow);
 }
 
 /* Nav columns */
@@ -2969,12 +3018,26 @@ body.reader-active #site-footer {
 }
 
 .footer-col h4 {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text2);
-  margin: 0 0 4px;
+  letter-spacing: 0.1em;
+  color: var(--accent2);
+  margin: 0 0 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.footer-col h4::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 24px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
 }
 
 .footer-nav-btn {
@@ -2983,25 +3046,44 @@ body.reader-active #site-footer {
   color: var(--text2);
   font-size: 0.875rem;
   font-family: inherit;
-  padding: 0;
+  padding: 2px 0;
   text-align: left;
   cursor: pointer;
-  transition: color var(--transition);
+  transition: color var(--transition), padding-left var(--transition);
   line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.footer-nav-btn::before {
+  content: '›';
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--transition), transform var(--transition);
 }
 
 .footer-nav-btn:hover {
-  color: var(--accent2);
+  color: var(--text);
+  padding-left: 6px;
+}
+
+.footer-nav-btn:hover::before {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 /* Bottom bar */
 .footer-bottom {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 18px 0 20px;
+  padding: 20px 0 24px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
   text-align: center;
 }
@@ -3009,12 +3091,30 @@ body.reader-active #site-footer {
 .footer-bottom p {
   margin: 0;
   font-size: 0.78rem;
-  color: var(--text2);
+  color: var(--text3);
   line-height: 1.5;
 }
 
+.footer-bottom p:first-child {
+  color: var(--text2);
+}
+
 .footer-disclaimer {
-  opacity: 0.6;
+  opacity: 0.7;
+}
+
+.footer-heart {
+  color: #e05555;
+  display: inline-block;
+  animation: heartbeat 1.8s ease-in-out infinite;
+}
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  14%       { transform: scale(1.25); }
+  28%       { transform: scale(1); }
+  42%       { transform: scale(1.15); }
+  56%       { transform: scale(1); }
 }
 
 /* Tablet */
