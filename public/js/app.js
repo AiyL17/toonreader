@@ -2124,7 +2124,41 @@ navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (
   if (event.data?.type === 'NAVIGATE' && event.data.url) {
     window.location.href = event.data.url;
   }
+  // New service worker activated — reload to get fresh assets
+  if (event.data?.type === 'SW_UPDATED') {
+    window.location.reload();
+  }
 });
+
+// ─── Version polling — auto-reload when a new build is deployed ──────────────
+(function initVersionCheck() {
+  const CURRENT_BUILD = document.documentElement.dataset.buildTime || '0';
+  const VERSION_URL   = '/version.json';
+  const CHECK_EVERY   = 5 * 60 * 1000; // check every 5 minutes
+
+  async function checkVersion() {
+    try {
+      const res  = await fetch(VERSION_URL + '?t=' + Date.now());
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.buildTime && String(data.buildTime) !== CURRENT_BUILD && CURRENT_BUILD !== '0') {
+        console.log('[version] New build detected, reloading...');
+        // Unregister SW so it re-installs fresh, then reload
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        window.location.reload(true);
+      }
+    } catch { /* network error, try again next interval */ }
+  }
+
+  // Start polling after 30s (give the app time to load first)
+  setTimeout(() => {
+    checkVersion();
+    setInterval(checkVersion, CHECK_EVERY);
+  }, 30000);
+})();
 
 // ─── Footer ───────────────────────────────────────────────────────────────────
 $('#footer-year').textContent = new Date().getFullYear();
