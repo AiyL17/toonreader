@@ -3,7 +3,7 @@
    API calls (manga data, images) are always fetched fresh from the network.
 ──────────────────────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = 'toonreader-shell-v4';
+const CACHE_NAME = 'toonreader-shell-v5';
 
 // Static assets that make up the app shell
 const SHELL_ASSETS = [
@@ -12,7 +12,7 @@ const SHELL_ASSETS = [
   '/css/style.css',
   '/js/app.js',
   '/manifest.json',
-  'https://unpkg.com/lucide@latest/dist/umd/lucide.min.js',
+  'https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js',
 ];
 
 // ─── Install: cache the app shell ────────────────────────────────────────────

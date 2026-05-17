@@ -69,6 +69,18 @@ let toastTimer = null;
 function showLoading() { loading.classList.remove('hidden'); }
 function hideLoading() { loading.classList.add('hidden'); }
 
+// Debounced localStorage persist — batches rapid state mutations into a single
+// write per 300 ms idle window, avoiding repeated JSON.stringify on every toggle.
+let _persistTimer = null;
+function persistState() {
+  clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => {
+    localStorage.setItem('bookmarks',    JSON.stringify(state.bookmarks));
+    localStorage.setItem('readHistory',  JSON.stringify(state.readHistory));
+    localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+  }, 300);
+}
+
 function showToast(msg, duration = 3000, type = '') {
   toast.textContent = msg;
   toast.className = '';  // clear previous type classes
@@ -272,7 +284,7 @@ function toggleBookmark(item, btnEl) {
     showToast('Added to favorites', 3000, 'success');
   }
 
-  localStorage.setItem('bookmarks', JSON.stringify(state.bookmarks));
+  persistState();
 
   // Sync to server if logged in
   syncToServer();
@@ -286,6 +298,32 @@ function isBookmarked(slug) {
 }
 
 const FAV_PAGE_SIZE = 10;
+// Chapter data in the favorites view is cached in localStorage for 30 minutes.
+const FAV_CHAPTER_TTL = 30 * 60 * 1000;
+
+// Renders the latest-chapters block inside a favorites row.
+// Extracted so it can be called from both the cache-hit and cache-miss paths.
+function renderFavChapters(row, chapters, item) {
+  const chapterEl = row.querySelector('.fav-chapters');
+  if (!chapterEl) return;
+  if (!chapters || chapters.length === 0) {
+    chapterEl.innerHTML = '<span class="fav-no-chapters">No chapters</span>';
+    return;
+  }
+  chapterEl.innerHTML = chapters.map(ch => `
+    <button class="fav-chapter-btn" data-url="${escHtml(ch.link)}" data-slug="${escHtml(item.slug)}" data-title="${escHtml(item.title)}">
+      <i data-lucide="book-open"></i>
+      <span>${escHtml(ch.title)}</span>
+    </button>
+  `).join('');
+  lucide.createIcons({ nodes: [chapterEl] });
+  chapterEl.querySelectorAll('.fav-chapter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      loadChapter(btn.dataset.url, btn.dataset.slug, btn.dataset.title);
+    });
+  });
+}
 
 function loadFavoritesView(page = state.favoritesPage) {
   const list = $('#favorites-list');
@@ -314,34 +352,36 @@ function loadFavoritesView(page = state.favoritesPage) {
 
   updateFavPageControls(page, totalPages);
 
-  // Render rows immediately with placeholders, then fill chapters async
+  // Render rows immediately with placeholders, then fill chapters async.
+  // Chapter data is cached in localStorage for FAV_CHAPTER_TTL ms to avoid
+  // firing one API request per bookmark on every page open (N+1 problem).
   pageItems.forEach(item => {
     const row = createFavoriteRow(item, null);
     list.appendChild(row);
 
-    // Fetch latest chapters in background
+    // Check localStorage cache first
+    const cacheKey = `fav_chapters_${item.slug}`;
+    const cached = (() => {
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Date.now() - parsed.ts > FAV_CHAPTER_TTL) { localStorage.removeItem(cacheKey); return null; }
+        return parsed.chapters;
+      } catch { return null; }
+    })();
+
+    if (cached) {
+      renderFavChapters(row, cached, item);
+      return;
+    }
+
+    // Cache miss — fetch from server
     apiFetch(`/api/manga/${encodeURIComponent(item.slug)}`)
       .then(data => {
-        const chapterEl = row.querySelector('.fav-chapters');
-        if (!chapterEl) return;
-        const latest = data.chapters.slice(0, 2); // chapters are newest-first
-        if (latest.length === 0) {
-          chapterEl.innerHTML = '<span class="fav-no-chapters">No chapters</span>';
-          return;
-        }
-        chapterEl.innerHTML = latest.map(ch => `
-          <button class="fav-chapter-btn" data-url="${escHtml(ch.link)}" data-slug="${escHtml(item.slug)}" data-title="${escHtml(item.title)}">
-            <i data-lucide="book-open"></i>
-            <span>${escHtml(ch.title)}</span>
-          </button>
-        `).join('');
-        lucide.createIcons({ nodes: [chapterEl] });
-        chapterEl.querySelectorAll('.fav-chapter-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            loadChapter(btn.dataset.url, btn.dataset.slug, btn.dataset.title);
-          });
-        });
+        const latest = data.chapters.slice(0, 2);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), chapters: latest })); } catch { /* quota */ }
+        renderFavChapters(row, latest, item);
       })
       .catch(() => {
         const chapterEl = row.querySelector('.fav-chapters');
@@ -997,7 +1037,7 @@ async function loadChapter(chapterUrl, mangaSlug, mangaTitle) {
     // Save last read
     if (mangaSlug) {
       state.readChapters[mangaSlug] = { link: chapterUrl, title: data.chapterTitle };
-      localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+      persistState();
       syncToServer();
     }
 
@@ -1098,7 +1138,7 @@ function markChapterRead(slug, link, title) {
   if (!all.includes(link)) {
     all.push(link);
     state.readChapters[key] = all;
-    localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+    persistState();
     syncToServer();
   }
 }
@@ -1110,7 +1150,7 @@ function saveHistory(slug, title, cover, link) {
     slug, title, cover, link,
     lastRead: Date.now(),
   };
-  localStorage.setItem('readHistory', JSON.stringify(state.readHistory));
+  persistState();
   syncToServer();
 }
 
@@ -1938,19 +1978,33 @@ authLogoutBtn.addEventListener('click', async () => {
 });
 
 // ─── Sync helpers ─────────────────────────────────────────────────────────────
-async function syncToServer() {
+
+// Debounce timer handle for syncToServer — prevents a network round-trip on
+// every rapid bookmark toggle or chapter mark. Flushes after 1.5 s of inactivity.
+let _syncTimer = null;
+
+function syncToServer() {
+  if (!state.user) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(_flushSyncToServer, 1500);
+}
+
+async function _flushSyncToServer() {
   if (!state.user) return;
   try {
-    await fetch('/api/sync/bookmarks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookmarks: state.bookmarks }),
-    });
-    await fetch('/api/sync/history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ readHistory: state.readHistory, readChapters: state.readChapters }),
-    });
+    // Fire both requests in parallel — they are independent of each other.
+    await Promise.all([
+      fetch('/api/sync/bookmarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookmarks: state.bookmarks }),
+      }),
+      fetch('/api/sync/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readHistory: state.readHistory, readChapters: state.readChapters }),
+      }),
+    ]);
   } catch (err) {
     console.warn('Sync to server failed:', err.message);
   }

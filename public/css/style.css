@@ -13,7 +13,7 @@
   --accent-glow: rgba(124, 106, 247, 0.25);
   --text: #e8e8f0;
   --text2: #9898b0;
-  --text3: #6060780;
+  --text3: #606078;
   --danger: #e05555;
   --success: #4caf7d;
   --badge-18: #e05555;
@@ -1423,6 +1423,7 @@ img { display: block; max-width: 100%; }
   background: linear-gradient(135deg, var(--accent-glow), #1e1e2a);
   border-color: var(--accent);
   opacity: 0.9;
+  will-change: transform;
 }
 
 .loader-book__page--2 {
@@ -1431,6 +1432,7 @@ img { display: block; max-width: 100%; }
   animation: pageFlip 1.4s ease-in-out infinite;
   animation-delay: 0.2s;
   opacity: 0.6;
+  will-change: transform;
 }
 
 .loader-book__page--3 {
@@ -1439,6 +1441,7 @@ img { display: block; max-width: 100%; }
   animation: pageFlip 1.4s ease-in-out infinite;
   animation-delay: 0.4s;
   opacity: 0.35;
+  will-change: transform;
 }
 
 @keyframes pageFlip {

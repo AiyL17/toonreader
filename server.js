@@ -21,9 +21,13 @@ const app = express();
 app.use(compression());
 
 // ─── Caches ───────────────────────────────────────────────────────────────────
-const cache       = new NodeCache({ stdTTL: 900,   checkperiod: 120  }); // latest: 15 min
-const browseCache = new NodeCache({ stdTTL: 1800,  checkperiod: 180  }); // browse/search/manga: 30 min
-const coverCache  = new NodeCache({ stdTTL: 86400, checkperiod: 3600 }); // covers: 24h
+// maxKeys prevents unbounded memory growth on long-running instances.
+// When the limit is reached, node-cache evicts the oldest entry automatically.
+const cache       = new NodeCache({ stdTTL: 900,   checkperiod: 120,  maxKeys: 500  }); // latest/chapters: 15 min, max 500 entries
+const browseCache = new NodeCache({ stdTTL: 1800,  checkperiod: 180,  maxKeys: 1000 }); // browse/search/manga: 30 min, max 1000 entries
+const coverCache  = new NodeCache({ stdTTL: 86400, checkperiod: 3600, maxKeys: 2000 }); // covers: 24 h, max 2000 entries
+// Image buffers are large (~100–500 KB each); cap at 200 entries (~100 MB worst-case).
+const imgCache    = new NodeCache({ stdTTL: 3600,  checkperiod: 600,  maxKeys: 200  }); // images: 1 h, max 200 entries
 
 const BASE_URL = 'https://mangadistrict.com';
 
@@ -590,7 +594,7 @@ app.get('/api/image', async (req, res) => {
   if (!allowed) return res.status(400).json({ error: 'Image host not allowed' });
 
   const cacheKey = 'img:' + imgUrl;
-  const cached = cache.get(cacheKey);
+  const cached = imgCache.get(cacheKey);
   if (cached) {
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -605,7 +609,7 @@ app.get('/api/image', async (req, res) => {
     });
     const buffer      = Buffer.from(response.data);
     const contentType = response.headers['content-type'] || 'image/jpeg';
-    cache.set(cacheKey, { buffer, contentType }, 3600);
+    imgCache.set(cacheKey, { buffer, contentType });
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(buffer);

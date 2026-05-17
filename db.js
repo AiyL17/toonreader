@@ -56,4 +56,21 @@ db.exec(`
   );
 `);
 
+// ─── Indexes ──────────────────────────────────────────────────────────────────
+// These are created separately so they can be added to an existing DB without
+// requiring a schema migration.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id
+    ON bookmarks(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_history_user_id
+    ON history(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_read_chapters_user_id
+    ON read_chapters(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_last_read_chapter_user_id
+    ON last_read_chapter(user_id);
+`);
+
 module.exports = db;
