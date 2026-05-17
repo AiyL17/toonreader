@@ -15,6 +15,11 @@ const db         = require('./db');
 const JWT_SECRET = process.env.JWT_SECRET || 'toonreader-secret-change-in-production';
 const JWT_EXPIRY = '30d';
 
+// Warn loudly when running with the default insecure secret
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  WARNING: JWT_SECRET env var is not set. Using insecure default. Set JWT_SECRET before deploying.');
+}
+
 const app = express();
 
 // ─── Compression ──────────────────────────────────────────────────────────────
@@ -203,7 +208,16 @@ function prefetch(serverPage) {
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+// Global rate limiter — 30 req/s per IP across all routes
 const limiter = rateLimit({ windowMs: 1000, max: 30 });
+// Stricter limiter for auth endpoints — 10 attempts per 15 minutes per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(limiter);
 app.set('trust proxy', 1);
 app.use(cookieParser());
@@ -211,7 +225,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: '1d',
   etag: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
@@ -226,7 +240,7 @@ function requireAuth(req, res, next) {
 }
 
 // ─── API: Register ────────────────────────────────────────────────────────────
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password are required' });
@@ -252,7 +266,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // ─── API: Login ───────────────────────────────────────────────────────────────
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password are required' });
@@ -521,6 +535,34 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// ─── Shared manga-page parser ─────────────────────────────────────────────────
+// Used by both /api/manga/:slug and /api/manga/batch to avoid duplicating
+// Cheerio traversal logic.
+async function parseMangaPage($, slug, full = true) {
+  const title    = $('.post-title h1, .post-title h3').first().text().trim();
+  const rawCover = $('.summary_image img').attr('src') || $('.summary_image img').attr('data-src') || '';
+  const cover    = rawCover.startsWith('data:') ? await resolveCover(slug) : rawCover;
+
+  const chapters = [];
+  $('.wp-manga-chapter').each((_, el) => {
+    const $el = $(el);
+    const chLink  = $el.find('a').attr('href') || '';
+    const chTitle = $el.find('a').text().trim();
+    const chDate  = $el.find('.chapter-release-date i').text().trim();
+    if (chLink) chapters.push({ title: chTitle, link: chLink, date: chDate });
+  });
+
+  if (!full) return { title, cover, chapters };
+
+  const summary = $('.summary__content p').text().trim() || $('.summary__content').text().trim();
+  const rating  = $('.score').first().text().trim();
+  const status  = $('.post-status .summary-content').first().text().trim();
+  const author  = $('.author-content a').map((_, el) => $(el).text().trim()).get().join(', ');
+  const genres  = $('.genres-content a').map((_, el) => $(el).text().trim()).get();
+
+  return { title, cover, summary, rating, status, author, genres, chapters };
+}
+
 // ─── API: Manga Detail ────────────────────────────────────────────────────────
 app.get('/api/manga/batch', async (req, res) => {
   // Batch endpoint: GET /api/manga/batch?slugs=slug1,slug2,...
@@ -540,24 +582,11 @@ app.get('/api/manga/batch', async (req, res) => {
       const html = await fetchHTML(url);
       const $    = cheerio.load(html);
 
-      const title    = $('.post-title h1, .post-title h3').first().text().trim();
-      const rawCover = $('.summary_image img').attr('src') || $('.summary_image img').attr('data-src') || '';
-      const cover    = rawCover.startsWith('data:') ? await resolveCover(slug) : rawCover;
-
-      const chapters = [];
-      $('.wp-manga-chapter').each((_, el) => {
-        const $el = $(el);
-        const chLink  = $el.find('a').attr('href') || '';
-        const chTitle = $el.find('a').text().trim();
-        const chDate  = $el.find('.chapter-release-date i').text().trim();
-        if (chLink) chapters.push({ title: chTitle, link: chLink, date: chDate });
-      });
-
-      // Store full detail in cache so /api/manga/:slug also benefits
-      const detail = { title, cover, chapters };
+      const detail = await parseMangaPage($, slug, false);
+      // Store in cache so /api/manga/:slug also benefits
       mangaDetailCache.set(slug, detail);
 
-      return [slug, { title, cover, chapters: chapters.slice(0, 2) }];
+      return [slug, { title: detail.title, cover: detail.cover, chapters: detail.chapters.slice(0, 2) }];
     } catch {
       return [slug, null];
     }
@@ -582,25 +611,8 @@ app.get('/api/manga/*', async (req, res) => {
     const html = await fetchHTML(url);
     const $ = cheerio.load(html);
 
-    const title    = $('.post-title h1, .post-title h3').first().text().trim();
-    const rawCover = $('.summary_image img').attr('src') || $('.summary_image img').attr('data-src') || '';
-    const cover    = rawCover.startsWith('data:') ? await resolveCover(slug) : rawCover;
-    const summary  = $('.summary__content p').text().trim() || $('.summary__content').text().trim();
-    const rating   = $('.score').first().text().trim();
-    const status   = $('.post-status .summary-content').first().text().trim();
-    const author   = $('.author-content a').map((_, el) => $(el).text().trim()).get().join(', ');
-    const genres   = $('.genres-content a').map((_, el) => $(el).text().trim()).get();
-
-    const chapters = [];
-    $('.wp-manga-chapter').each((_, el) => {
-      const $el = $(el);
-      const chLink  = $el.find('a').attr('href') || '';
-      const chTitle = $el.find('a').text().trim();
-      const chDate  = $el.find('.chapter-release-date i').text().trim();
-      if (chLink) chapters.push({ title: chTitle, link: chLink, date: chDate });
-    });
-
-    const payload = { title, cover, summary, rating, status, author, genres, chapters, url };
+    const payload = await parseMangaPage($, slug, true);
+    payload.url = url;
     mangaDetailCache.set(slug, payload);
 
     res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');

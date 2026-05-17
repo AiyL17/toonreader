@@ -24,7 +24,7 @@ db.exec(`
     link       TEXT    NOT NULL DEFAULT '',
     badge      TEXT    NOT NULL DEFAULT '',
     rating     TEXT    NOT NULL DEFAULT '',
-    added_at   INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    added_at   INTEGER NOT NULL DEFAULT (unixepoch() * 1000), -- stored as Unix milliseconds (JS Date.now() compatible)
     UNIQUE(user_id, slug)
   );
 
@@ -35,7 +35,7 @@ db.exec(`
     title      TEXT    NOT NULL,
     cover      TEXT    NOT NULL DEFAULT '',
     link       TEXT    NOT NULL DEFAULT '',
-    last_read  INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    last_read  INTEGER NOT NULL DEFAULT (unixepoch() * 1000), -- stored as Unix milliseconds (JS Date.now() compatible)
     UNIQUE(user_id, slug)
   );
 
@@ -68,6 +68,9 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_read_chapters_user_id
     ON read_chapters(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_read_chapters_user_slug
+    ON read_chapters(user_id, slug);
 
   CREATE INDEX IF NOT EXISTS idx_last_read_chapter_user_id
     ON last_read_chapter(user_id);

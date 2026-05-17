@@ -75,10 +75,21 @@ let _persistTimer = null;
 function persistState() {
   clearTimeout(_persistTimer);
   _persistTimer = setTimeout(() => {
-    localStorage.setItem('bookmarks',    JSON.stringify(state.bookmarks));
-    localStorage.setItem('readHistory',  JSON.stringify(state.readHistory));
-    localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+    try {
+      localStorage.setItem('bookmarks',    JSON.stringify(state.bookmarks));
+      localStorage.setItem('readHistory',  JSON.stringify(state.readHistory));
+      localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+    } catch (e) {
+      console.warn('localStorage quota exceeded, could not persist state:', e);
+    }
   }, 300);
+}
+
+// Convenience: persist to localStorage AND schedule a server sync in one call.
+// Use this everywhere state changes, instead of calling both separately.
+function saveAndSync() {
+  persistState();
+  syncToServer();
 }
 
 function showToast(msg, duration = 3000, type = '') {
@@ -291,10 +302,7 @@ function toggleBookmark(item, btnEl) {
     showToast('Added to favorites', 3000, 'success');
   }
 
-  persistState();
-
-  // Sync to server if logged in
-  syncToServer();
+  saveAndSync();
 
   // Refresh favorites view if it's open
   if (state.currentView === 'favorites') loadFavoritesView();
@@ -396,7 +404,7 @@ function loadFavoritesView(page = state.favoritesPage) {
           if (!row) return;
           const chapters = batchData[item.slug]?.chapters || null;
           if (chapters) {
-            try { localStorage.setItem(`fav_chapters_${item.slug}`, JSON.stringify({ ts: Date.now(), chapters })); } catch { /* quota */ }
+            try { localStorage.setItem(`fav_chapters_${item.slug}`, JSON.stringify({ ts: Date.now(), chapters })); } catch { /* storage quota exceeded */ }
           }
           renderFavChapters(row, chapters, item);
         });
@@ -478,7 +486,7 @@ function createFavoriteRow(item, chapters) {
     );
     if (!confirmed) return;
     delete state.bookmarks[item.slug];
-    localStorage.setItem('bookmarks', JSON.stringify(state.bookmarks));
+    saveAndSync();
     row.classList.add('fav-row-removing');
     row.addEventListener('animationend', () => {
       row.remove();
@@ -607,13 +615,16 @@ async function loadHome(page = 1) {
     // If we still don't have enough, fetch more pages sequentially as a fallback
     let collected = items;
     let cursor = lastFetched;
+    // Use a Set for O(1) dedup instead of Array.some (O(n²))
+    const seenFallback = new Set(collected.map(c => c.slug));
     while (collected.length < HOME_PAGE_SIZE && cursor < serverStartPage + 15) {
       cursor++;
       try {
         const data = await apiFetch(`/api/latest?page=${cursor}`);
         if (!data.results || data.results.length === 0) break;
         for (const item of data.results) {
-          if (collected.some(c => c.slug === item.slug)) continue;
+          if (seenFallback.has(item.slug)) continue;
+          seenFallback.add(item.slug);
           if (predicate(item)) {
             collected.push(item);
             if (collected.length >= HOME_PAGE_SIZE) break;
@@ -692,13 +703,16 @@ async function loadBrowse(page = 1) {
     let collected = items;
     let cursor = lastFetched;
     let reachedEnd = false;
+    // Use a Set for O(1) dedup instead of Array.some (O(n²))
+    const seenFallback = new Set(collected.map(c => c.slug));
     while (collected.length < BROWSE_PAGE_SIZE && cursor < serverStartPage + 20) {
       cursor++;
       try {
         const data = await apiFetch(`${baseEndpoint}${cursor}`);
         if (!data.results || data.results.length === 0) { reachedEnd = true; break; }
         for (const item of data.results) {
-          if (collected.some(c => c.slug === item.slug)) continue;
+          if (seenFallback.has(item.slug)) continue;
+          seenFallback.add(item.slug);
           if (ratingPredicate(item)) {
             collected.push(item);
             if (collected.length >= BROWSE_PAGE_SIZE) break;
@@ -775,7 +789,7 @@ async function loadMangaDetail(mangaLink, slug) {
       <button class="back-btn" id="manga-back-btn">${ICONS.arrowLeft} Back</button>
       <div class="manga-detail-header">
         <div class="manga-detail-cover">
-          <img src="${proxyImg(data.cover)}" alt="${escHtml(data.title)}" onerror="this.src=''" />
+          <img id="manga-detail-cover-img" src="${proxyImg(data.cover)}" alt="${escHtml(data.title)}" />
         </div>
         <div class="manga-detail-info">
           <h1>${escHtml(data.title)}</h1>
@@ -827,14 +841,21 @@ async function loadMangaDetail(mangaLink, slug) {
     // Activate Lucide icons injected into this container
     lucide.createIcons({ nodes: [container] });
 
-    // Events
+    // Cover image error fallback (no inline onerror)
+    const coverImg = $('#manga-detail-cover-img');
+    if (coverImg) {
+      coverImg.addEventListener('error', () => {
+        coverImg.style.display = 'none';
+      });
+    }
+
+    // Back button
     $('#manga-back-btn').addEventListener('click', () => {
-      showView(state.currentView === 'manga' ? 'home' : state.currentView);
-      // Go back to previous view
       const prev = sessionStorage.getItem('prevView') || 'home';
       showView(prev);
     });
 
+    // Read more — desktop
     const readMoreBtn = $('#read-more-btn');
     if (readMoreBtn) {
       readMoreBtn.addEventListener('click', () => {
@@ -847,6 +868,7 @@ async function loadMangaDetail(mangaLink, slug) {
       });
     }
 
+    // Read more — mobile
     const readMoreBtnMobile = $('#read-more-btn-mobile');
     if (readMoreBtnMobile) {
       readMoreBtnMobile.addEventListener('click', () => {
@@ -859,71 +881,50 @@ async function loadMangaDetail(mangaLink, slug) {
       });
     }
 
-    const startBtn = $('#start-reading-btn');
-    if (startBtn && firstChapter) {
-      startBtn.addEventListener('click', () => loadChapter(firstChapter.link, slug, data.title));
-    }
-
-    const startBtnMobile = $('#start-reading-btn-mobile');
-    if (startBtnMobile && firstChapter) {
-      startBtnMobile.addEventListener('click', () => loadChapter(firstChapter.link, slug, data.title));
-    }
-
-    const continueBtn = $('#continue-reading-btn');
-    if (continueBtn && lastReadChapter) {
-      continueBtn.addEventListener('click', () => loadChapter(lastReadChapter.link, slug, data.title));
-    }
-
-    const continueBtnMobile = $('#continue-reading-btn-mobile');
-    if (continueBtnMobile && lastReadChapter) {
-      continueBtnMobile.addEventListener('click', () => loadChapter(lastReadChapter.link, slug, data.title));
-    }
-
-    const bookmarkDetailBtn = $('#bookmark-detail-btn');
-    if (bookmarkDetailBtn) {
-      bookmarkDetailBtn.addEventListener('click', () => {
-        const item = { slug, title: data.title, cover: data.cover, link: mangaLink, badge: '', rating: data.rating || '' };
-        toggleBookmark(item, null);
-        const bm = isBookmarked(slug);
-        bookmarkDetailBtn.innerHTML = bm
-          ? ICONS.bookmarkFill + ' Bookmarked'
-          : ICONS.bookmark + ' Add to Favorites';
-        bookmarkDetailBtn.classList.toggle('bookmarked', bm);
-        // sync mobile copy
-        const bookmarkDetailBtnMobile = $('#bookmark-detail-btn-mobile');
-        if (bookmarkDetailBtnMobile) {
-          bookmarkDetailBtnMobile.innerHTML = bm
-            ? ICONS.bookmarkFill + ' Bookmarked'
-            : ICONS.bookmark + ' Add to Favorites';
-          bookmarkDetailBtnMobile.classList.toggle('bookmarked', bm);
-        }
+    // Start reading — wire both desktop and mobile buttons to the same handler
+    if (firstChapter) {
+      ['#start-reading-btn', '#start-reading-btn-mobile'].forEach(sel => {
+        const btn = $(sel);
+        if (btn) btn.addEventListener('click', () => loadChapter(firstChapter.link, slug, data.title));
       });
     }
 
-    const bookmarkDetailBtnMobile = $('#bookmark-detail-btn-mobile');
-    if (bookmarkDetailBtnMobile) {
-      bookmarkDetailBtnMobile.addEventListener('click', () => {
-        const item = { slug, title: data.title, cover: data.cover, link: mangaLink, badge: '', rating: data.rating || '' };
-        toggleBookmark(item, null);
-        const bm = isBookmarked(slug);
-        bookmarkDetailBtnMobile.innerHTML = bm
-          ? ICONS.bookmarkFill + ' Bookmarked'
-          : ICONS.bookmark + ' Add to Favorites';
-        bookmarkDetailBtnMobile.classList.toggle('bookmarked', bm);
-        // sync desktop copy
-        if (bookmarkDetailBtn) {
-          bookmarkDetailBtn.innerHTML = bm
-            ? ICONS.bookmarkFill + ' Bookmarked'
-            : ICONS.bookmark + ' Add to Favorites';
-          bookmarkDetailBtn.classList.toggle('bookmarked', bm);
-        }
+    // Continue reading — wire both desktop and mobile buttons to the same handler
+    if (lastReadChapter) {
+      ['#continue-reading-btn', '#continue-reading-btn-mobile'].forEach(sel => {
+        const btn = $(sel);
+        if (btn) btn.addEventListener('click', () => loadChapter(lastReadChapter.link, slug, data.title));
       });
     }
 
+    // Bookmark — single handler that keeps both desktop and mobile buttons in sync
+    function syncBookmarkBtns() {
+      const bm = isBookmarked(slug);
+      const label = bm ? ICONS.bookmarkFill + ' Bookmarked' : ICONS.bookmark + ' Add to Favorites';
+      ['#bookmark-detail-btn', '#bookmark-detail-btn-mobile'].forEach(sel => {
+        const btn = $(sel);
+        if (!btn) return;
+        btn.innerHTML = label;
+        btn.classList.toggle('bookmarked', bm);
+      });
+    }
+
+    ['#bookmark-detail-btn', '#bookmark-detail-btn-mobile'].forEach(sel => {
+      const btn = $(sel);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const item = { slug, title: data.title, cover: data.cover, link: mangaLink, badge: '', rating: data.rating || '' };
+        toggleBookmark(item, null);
+        syncBookmarkBtns();
+      });
+    });
+
+    // Chapter filter
     $('#chapter-search').addEventListener('input', (e) => {
       filterChapters(e.target.value, data.chapters, slug);
     });
 
+    // Genre tags → browse
     $$('.genre-tag').forEach(tag => {
       tag.addEventListener('click', () => {
         state.browseGenre = tag.textContent.toLowerCase().replace(/\s+/g, '-');
@@ -944,8 +945,8 @@ async function loadMangaDetail(mangaLink, slug) {
 function renderChapterList(chapters, slug) {
   const list = $('#chapter-list');
   if (!list) return;
-  list.innerHTML = '';
 
+  const frag = document.createDocumentFragment();
   chapters.forEach(ch => {
     const isRead = state.readChapters[slug]?.link === ch.link ||
       (state.readChapters[`${slug}_all`] || []).includes(ch.link);
@@ -960,17 +961,20 @@ function renderChapterList(chapters, slug) {
       const mangaTitle = $('#manga-detail h1')?.textContent || '';
       loadChapter(ch.link, slug, mangaTitle);
     });
-    list.appendChild(item);
+    frag.appendChild(item);
   });
+
+  list.replaceChildren(frag);
 }
 
+let _chapterFilterTimer = null;
 function filterChapters(query, chapters, slug) {
-  const list = $('#chapter-list');
-  if (!list) return;
-  const q = query.toLowerCase();
-  list.innerHTML = '';
-  const filtered = q ? chapters.filter(ch => ch.title.toLowerCase().includes(q)) : chapters;
-  renderChapterList(filtered, slug);
+  clearTimeout(_chapterFilterTimer);
+  _chapterFilterTimer = setTimeout(() => {
+    const q = query.toLowerCase();
+    const filtered = q ? chapters.filter(ch => ch.title.toLowerCase().includes(q)) : chapters;
+    renderChapterList(filtered, slug);
+  }, 150);
 }
 
 // ─── Chapter Reader ───────────────────────────────────────────────────────────
@@ -1043,8 +1047,7 @@ async function loadChapter(chapterUrl, mangaSlug, mangaTitle) {
     // Save last read
     if (mangaSlug) {
       state.readChapters[mangaSlug] = { link: chapterUrl, title: data.chapterTitle };
-      persistState();
-      syncToServer();
+      saveAndSync();
     }
 
   } catch (err) {
@@ -1144,8 +1147,7 @@ function markChapterRead(slug, link, title) {
   if (!all.includes(link)) {
     all.push(link);
     state.readChapters[key] = all;
-    persistState();
-    syncToServer();
+    saveAndSync();
   }
 }
 
@@ -1156,8 +1158,7 @@ function saveHistory(slug, title, cover, link) {
     slug, title, cover, link,
     lastRead: Date.now(),
   };
-  persistState();
-  syncToServer();
+  saveAndSync();
 }
 
 const HISTORY_PAGE_SIZE = 21;
@@ -1683,8 +1684,7 @@ $('#clear-history-btn').addEventListener('click', async () => {
     state.readHistory = {};
     state.readChapters = {};
     state.historyPage = 1;
-    localStorage.removeItem('readHistory');
-    localStorage.removeItem('readChapters');
+    saveAndSync();
     loadHistoryView();
     showToast('History cleared', 3000, 'success');
   }
@@ -1699,7 +1699,7 @@ $('#clear-favorites-btn').addEventListener('click', async () => {
   if (confirmed) {
     state.bookmarks = {};
     state.favoritesPage = 1;
-    localStorage.removeItem('bookmarks');
+    saveAndSync();
     loadFavoritesView(1);
     showToast('Favorites cleared', 3000, 'success');
   }
@@ -1765,13 +1765,11 @@ function showAuthModal(tab = 'login') {
   authOverlay.classList.remove('hidden');
   lucide.createIcons({ nodes: [authOverlay] });
 
-  // Restore remembered credentials
+  // Restore remembered username only
   if (tab === 'login') {
     const rememberedUser = localStorage.getItem('rememberedUsername');
-    const rememberedPass = localStorage.getItem('rememberedPassword');
     if (rememberedUser) {
       $('#login-username').value = rememberedUser;
-      $('#login-password').value = rememberedPass || '';
       $('#login-remember').checked = true;
     } else {
       $('#login-remember').checked = false;
@@ -1914,13 +1912,11 @@ authLoginForm.addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok) { showAuthError('login', data.error || 'Login failed'); return; }
 
-    // Save or clear remembered credentials
+    // Save or clear remembered username only — never store the password in localStorage
     if (remember) {
-      localStorage.setItem('rememberedUsername', username);
-      localStorage.setItem('rememberedPassword', password);
+      try { localStorage.setItem('rememberedUsername', username); } catch { /* quota */ }
     } else {
       localStorage.removeItem('rememberedUsername');
-      localStorage.removeItem('rememberedPassword');
     }
 
     setAuthUser(data.user);
@@ -2029,9 +2025,8 @@ async function syncFromServer() {
     state.readHistory  = { ...state.readHistory,  ...histRes.readHistory };
     state.readChapters = { ...state.readChapters, ...histRes.readChapters };
 
-    localStorage.setItem('bookmarks',    JSON.stringify(state.bookmarks));
-    localStorage.setItem('readHistory',  JSON.stringify(state.readHistory));
-    localStorage.setItem('readChapters', JSON.stringify(state.readChapters));
+    // Use persistState so writes are quota-guarded
+    persistState();
 
     // Refresh current view if relevant
     if (state.currentView === 'favorites') loadFavoritesView(1);
@@ -2062,6 +2057,9 @@ $('#footer-register-btn').addEventListener('click', () => showAuthModal('registe
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
+  // One-time migration: remove plaintext password that older versions stored
+  localStorage.removeItem('rememberedPassword');
+
   // Restore settings
   const savedWidth = localStorage.getItem('imgWidth');
   if (savedWidth) {
