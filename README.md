@@ -21,6 +21,9 @@ For development with auto-restart:
 npm run dev
 ```
 
+Github Hosted URL:
+https://aiyl17.github.io/toonreader/
+
 ## Running with Public URL (Cloudflare Tunnel)
 
 Use this to access ToonReader on your phone from anywhere.
