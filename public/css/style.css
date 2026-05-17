@@ -290,7 +290,7 @@ img { display: block; max-width: 100%; }
 .header-nav {
   display: flex;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 1;
 }
 
 .nav-btn {
@@ -2768,6 +2768,20 @@ body #main-content {
   display: flex;
   align-items: center;
   gap: 6px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
+.auth-login-nav-btn:hover {
+  opacity: 0.88;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-color: transparent;
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px var(--accent-glow);
 }
 
 .auth-user-nav-btn {
