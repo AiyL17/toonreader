@@ -46,6 +46,11 @@
                 <span id="auth-username-display"></span>
               </button>
               <div id="auth-dropdown" class="hidden">
+                <div id="notif-toggle-wrap" class="auth-dropdown-notif">
+                  <i data-lucide="bell"></i>
+                  <label id="notif-toggle-label" for="notif-toggle">Notifications Off</label>
+                  <input type="checkbox" id="notif-toggle" role="switch" aria-label="Toggle push notifications" />
+                </div>
                 <button id="auth-logout-btn"><i data-lucide="log-out"></i> Sign Out</button>
               </div>
             </div>
@@ -82,6 +87,11 @@
             <div class="mobile-nav-user-info">
               <i data-lucide="user-circle"></i>
               <span id="mobile-auth-username"></span>
+            </div>
+            <div id="mobile-notif-toggle-wrap" class="mobile-notif-wrap">
+              <i data-lucide="bell"></i>
+              <label id="mobile-notif-toggle-label" for="mobile-notif-toggle">Notifications Off</label>
+              <input type="checkbox" id="mobile-notif-toggle" role="switch" aria-label="Toggle push notifications" />
             </div>
             <button id="mobile-auth-logout-btn" class="mobile-nav-btn mobile-nav-logout-btn">
               <i data-lucide="log-out"></i> Sign Out

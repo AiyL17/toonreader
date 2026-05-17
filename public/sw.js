@@ -1,9 +1,10 @@
 /* ─── ToonReader Service Worker ──────────────────────────────────────────────
    Provides offline shell caching so the app loads even with no connection.
    API calls (manga data, images) are always fetched fresh from the network.
+   Handles push notifications for bookmarked manga chapter updates.
 ──────────────────────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = 'toonreader-shell-v1';
+const CACHE_NAME = 'toonreader-shell-v2';
 
 // Static assets that make up the app shell
 const SHELL_ASSETS = [
@@ -61,6 +62,47 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       });
+    })
+  );
+});
+
+// ─── Push: show notification when a bookmarked manga updates ─────────────────
+self.addEventListener('push', (event) => {
+  let data = { title: 'ToonReader', body: 'A manga you follow has updated!', url: '/' };
+  try {
+    data = event.data.json();
+  } catch {}
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body:    data.body,
+      icon:    '/icons/icon-192.png',
+      badge:   '/icons/icon-192.png',
+      data:    { url: data.url },
+      vibrate: [200, 100, 200],
+      tag:     'chapter-update-' + (data.slug || 'unknown'),
+      renotify: true,
+    })
+  );
+});
+
+// ─── Notification click: open the manga page ─────────────────────────────────
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // If app is already open, focus it and navigate
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.focus();
+          client.postMessage({ type: 'NAVIGATE', url: targetUrl });
+          return;
+        }
+      }
+      // Otherwise open a new window
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });

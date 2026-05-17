@@ -1488,23 +1488,25 @@ img { display: block; max-width: 100%; }
 
 #toast {
   position: fixed;
-  top: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 10px 20px;
+  top: 72px;
+  right: 24px;
+  left: auto;
+  transform: none;
+  background: #2a2a3a;
+  border: 1px solid #4a4a6a;
+  color: #e8e8f0;
+  padding: 11px 20px;
   border-radius: var(--radius);
   font-size: 0.875rem;
+  font-weight: 500;
   z-index: 1100;
-  box-shadow: var(--shadow);
-  animation: fadeInDown 0.3s ease;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.06);
+  animation: fadeInRight 0.25s ease;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   white-space: nowrap;
-  max-width: calc(100vw - 40px);
+  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1516,18 +1518,30 @@ img { display: block; max-width: 100%; }
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--text2);
+  background: var(--accent2);
+  box-shadow: 0 0 6px var(--accent);
 }
 
 #toast.toast--success {
-  border-color: var(--success);
-  background: rgba(76, 175, 125, 0.12);
+  background: #1a2e24;
+  border-color: #3a7a5a;
   color: #7ee8b0;
 }
 
 #toast.toast--success::before {
   background: var(--success);
-  box-shadow: 0 0 6px var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+#toast.toast--error {
+  background: #2e1a1a;
+  border-color: #7a3a3a;
+  color: #f0a0a0;
+}
+
+#toast.toast--error::before {
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
 }
 
 @keyframes fadeInDown {
@@ -1535,24 +1549,35 @@ img { display: block; max-width: 100%; }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* ≤768px — keep centered, just below the sticky header */
+@keyframes fadeInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ≤768px — full-width centered bar just below the sticky header */
 @media (max-width: 768px) {
   #toast {
     top: 68px;
-    bottom: auto;
+    right: 12px;
+    left: 12px;
+    transform: none;
+    width: calc(100% - 24px);
+    max-width: none;
+    white-space: normal;
+    justify-content: center;
+    text-align: center;
     font-size: 0.82rem;
-    padding: 9px 16px;
-    max-width: calc(100vw - 32px);
+    padding: 10px 14px;
+    animation: fadeInDown 0.25s ease;
   }
 }
 
-/* ≤480px — full-width bar just below the header */
+/* ≤480px */
 @media (max-width: 480px) {
   #toast {
     top: 64px;
-    bottom: auto;
-    left: 12px;
     right: 12px;
+    left: 12px;
     transform: none;
     width: calc(100% - 24px);
     max-width: none;
@@ -1562,11 +1587,7 @@ img { display: block; max-width: 100%; }
     font-size: 0.82rem;
     padding: 10px 14px;
     border-radius: var(--radius-sm);
-  }
-
-  @keyframes fadeInDown {
-    from { opacity: 0; transform: translateY(-10px); }
-    to   { opacity: 1; transform: translateY(0); }
+    animation: fadeInDown 0.25s ease;
   }
 }
 
@@ -2788,6 +2809,92 @@ body #main-content {
 
 #auth-logout-btn:hover { background: rgba(224, 85, 85, 0.1); }
 #auth-logout-btn svg { width: 15px; height: 15px; }
+
+/* ─── Notification toggle (dropdown + mobile nav) ──────────────────────────── */
+.auth-dropdown-notif {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+  color: var(--text2);
+}
+
+.auth-dropdown-notif svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--accent2);
+}
+
+#notif-toggle-label,
+#mobile-notif-toggle-label {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--text2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Toggle switch */
+#notif-toggle,
+#mobile-notif-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 36px;
+  height: 20px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+#notif-toggle::after,
+#mobile-notif-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text2);
+  transition: transform 0.2s, background 0.2s;
+}
+
+#notif-toggle:checked,
+#mobile-notif-toggle:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+#notif-toggle:checked::after,
+#mobile-notif-toggle:checked::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* Mobile nav notification row */
+.mobile-notif-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+  color: var(--text2);
+}
+
+.mobile-notif-wrap svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--accent2);
+}
 
 @media (max-width: 768px) {
   #auth-dialog {
