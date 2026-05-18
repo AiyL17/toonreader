@@ -499,6 +499,26 @@ function createFavoriteRow(item, chapters) {
   return row;
 }
 
+function showSkeletons(containerId, count = 21) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < count; i++) {
+    const card = document.createElement('div');
+    card.className = 'manga-card-skeleton';
+    card.innerHTML = `
+      <div class="skeleton-block skeleton-cover"></div>
+      <div class="skeleton-info">
+        <div class="skeleton-block skeleton-title-line"></div>
+        <div class="skeleton-block skeleton-title-line-2"></div>
+        <div class="skeleton-block skeleton-chapter"></div>
+      </div>
+    `;
+    frag.appendChild(card);
+  }
+  container.replaceChildren(frag);
+}
+
 function renderGrid(containerId, items) {
   const container = document.getElementById(containerId);
   if (!items || items.length === 0) {
@@ -579,6 +599,7 @@ async function fetchParallelPages(endpoint, startPage, count, needed, predicate)
 
 async function loadHome(page = 1) {
   showLoading();
+  showSkeletons('home-grid', HOME_PAGE_SIZE);
   try {
     // Determine which server page to start from
     let serverStartPage;
@@ -666,6 +687,7 @@ const BROWSE_PAGE_SIZE = 21;
 
 async function loadBrowse(page = 1) {
   showLoading();
+  showSkeletons('browse-grid', BROWSE_PAGE_SIZE);
   try {
     // Determine which server page to start from
     let serverStartPage;
@@ -743,6 +765,7 @@ async function doSearch(query, page = 1) {
   state.searchPage = page;
   showView('search');
   showLoading();
+  showSkeletons('search-grid', 21);
   $('#search-query-label').textContent = `"${query}"`;
 
   try {

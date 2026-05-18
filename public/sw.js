@@ -5,7 +5,7 @@
    Write API     → network-only (auth, sync)
 ──────────────────────────────────────────────────────────────────────────── */
 
-const SHELL_CACHE = 'toonreader-shell-v7';
+const SHELL_CACHE = 'toonreader-shell-v8';
 const API_CACHE   = 'toonreader-api-v2';
 const IMG_CACHE   = 'toonreader-img-v1';
 
@@ -87,13 +87,17 @@ self.addEventListener('fetch', (event) => {
         const cached = await cache.match(event.request);
         if (cached) return cached;
 
-        const response = await fetch(event.request);
-        if (response.ok) {
-          cache.put(event.request, response.clone());
-          // Trim asynchronously so it doesn't block the response
-          trimCache(IMG_CACHE, IMG_CACHE_MAX).catch(() => {});
+        try {
+          const response = await fetch(event.request);
+          if (response.ok) {
+            cache.put(event.request, response.clone());
+            // Trim asynchronously so it doesn't block the response
+            trimCache(IMG_CACHE, IMG_CACHE_MAX).catch(() => {});
+          }
+          return response;
+        } catch {
+          return new Response('', { status: 503, statusText: 'Network unavailable' });
         }
-        return response;
       })
     );
     return;
@@ -125,7 +129,14 @@ self.addEventListener('fetch', (event) => {
 
   // ── Write / auth: always network ──────────────────────────────────────────
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(fetch(event.request));
+    event.respondWith(
+      fetch(event.request).catch(() =>
+        new Response(JSON.stringify({ error: 'Network unavailable' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
     return;
   }
 
