@@ -790,6 +790,8 @@ async function doSearch(query, page = 1) {
 async function loadMangaDetail(mangaLink, slug) {
   state.currentMangaSlug = slug || mangaLink;
   state.currentMangaUrl = mangaLink;
+  // Capture the view we're navigating away from so the Back button returns correctly
+  sessionStorage.setItem('prevView', state.currentView);
   showView('manga');
   showLoading();
 
