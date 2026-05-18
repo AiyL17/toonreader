@@ -1,11 +1,9 @@
 const express = require('express');
 const bcrypt  = require('bcryptjs');
-const jwt     = require('jsonwebtoken');
 const db      = require('../db');
-const { authLimiter, JWT_SECRET } = require('../middleware/auth');
+const { authLimiter, signToken, verifyToken, cookieOptions } = require('../middleware/auth');
 
 const router   = express.Router();
-const JWT_EXPIRY = '30d';
 
 // ─── Register ─────────────────────────────────────────────────────────────────
 router.post('/register', authLimiter, async (req, res) => {
@@ -23,8 +21,8 @@ router.post('/register', authLimiter, async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     const stmt   = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)');
     const result = stmt.run(username, hashed);
-    const token  = jwt.sign({ id: result.lastInsertRowid, username }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    res.cookie('token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+    const token  = signToken({ id: result.lastInsertRowid, username });
+    res.cookie('token', token, cookieOptions());
     res.json({ ok: true, user: { id: result.lastInsertRowid, username } });
   } catch (err) {
     if (err.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already taken' });
@@ -46,8 +44,8 @@ router.post('/login', authLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Invalid username or password' });
 
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    res.cookie('token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+    const token = signToken({ id: user.id, username: user.username });
+    res.cookie('token', token, cookieOptions());
     res.json({ ok: true, user: { id: user.id, username: user.username } });
   } catch (err) {
     console.error('Login error:', err.message);
@@ -66,7 +64,7 @@ router.get('/me', (req, res) => {
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.json({ user: null });
   try {
-    const user = jwt.verify(token, JWT_SECRET);
+    const user = verifyToken(token);
     res.json({ user: { id: user.id, username: user.username } });
   } catch {
     res.json({ user: null });

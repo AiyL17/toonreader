@@ -2,6 +2,12 @@ const express = require('express');
 const db      = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
+const SLUG_RE = /^[a-zA-Z0-9_\-]{1,200}$/;
+
+function isValidSlug(slug) {
+  return typeof slug === 'string' && SLUG_RE.test(slug);
+}
+
 const router = express.Router();
 
 // ─── GET bookmarks ────────────────────────────────────────────────────────────
@@ -39,6 +45,10 @@ router.post('/bookmarks', requireAuth, (req, res) => {
 
   const syncAll = db.transaction(() => {
     for (const [slug, b] of Object.entries(bookmarks)) {
+      if (!isValidSlug(slug)) {
+        console.warn('Sync: skipping invalid slug:', slug.slice(0, 50));
+        continue;
+      }
       upsert.run(req.user.id, slug, b.title || '', b.cover || '', b.link || '', b.badge || '', b.rating || '', b.addedAt || Date.now());
     }
     for (const slug of serverSlugs) {
@@ -96,6 +106,10 @@ router.post('/history', requireAuth, (req, res) => {
   const syncAll = db.transaction(() => {
     if (readHistory && typeof readHistory === 'object') {
       for (const [slug, h] of Object.entries(readHistory)) {
+        if (!isValidSlug(slug)) {
+          console.warn('Sync: skipping invalid slug:', slug.slice(0, 50));
+          continue;
+        }
         upsertHist.run(req.user.id, slug, h.title || '', h.cover || '', h.link || '', h.lastRead || Date.now());
       }
     }
@@ -103,8 +117,16 @@ router.post('/history', requireAuth, (req, res) => {
       for (const [key, val] of Object.entries(readChapters)) {
         if (key.endsWith('_all') && Array.isArray(val)) {
           const slug = key.replace(/_all$/, '');
+          if (!isValidSlug(slug)) {
+            console.warn('Sync: skipping invalid slug:', slug.slice(0, 50));
+            continue;
+          }
           for (const url of val) upsertChap.run(req.user.id, slug, url);
         } else if (!key.endsWith('_all') && val && val.link) {
+          if (!isValidSlug(key)) {
+            console.warn('Sync: skipping invalid slug:', key.slice(0, 50));
+            continue;
+          }
           upsertLast.run(req.user.id, key, val.link, val.title || '');
         }
       }

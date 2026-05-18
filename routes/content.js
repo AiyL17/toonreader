@@ -15,7 +15,7 @@ const router = express.Router();
 
 // ─── Latest ───────────────────────────────────────────────────────────────────
 router.get('/latest', async (req, res) => {
-  const serverPage = parseInt(req.query.page) || 1;
+  const serverPage = parseInt(req.query.page, 10) || 1;
   try {
     const cards = await fetchLatestCards(serverPage);
     prefetch(serverPage + 1);
@@ -25,7 +25,7 @@ router.get('/latest', async (req, res) => {
     res.json({ results: cards, page: serverPage });
   } catch (err) {
     console.error('Latest error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch latest updates', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch latest updates' });
   }
 });
 
@@ -60,16 +60,16 @@ router.get('/browse', async (req, res) => {
     let totalPages = 0;
     const lastPageLink = $('.wp-pagenavi a:last-child').attr('href') || '';
     const pageMatch = lastPageLink.match(/page\/(\d+)/);
-    if (pageMatch) totalPages = parseInt(pageMatch[1]);
+    if (pageMatch) totalPages = parseInt(pageMatch[1], 10);
 
-    const payload = { results, page: parseInt(page), totalPages };
+    const payload = { results, page: parseInt(page, 10), totalPages };
     browseResultCache.set(resultCacheKey, payload);
 
     res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
     res.json(payload);
   } catch (err) {
     console.error('Browse error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch browse results', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch browse results' });
   }
 });
 
@@ -103,13 +103,13 @@ router.get('/search', async (req, res) => {
     let totalPages = 1;
     const lastPageLink = $('.wp-pagenavi a:last-child').attr('href') || '';
     const pageMatch = lastPageLink.match(/paged=(\d+)/);
-    if (pageMatch) totalPages = parseInt(pageMatch[1]);
+    if (pageMatch) totalPages = parseInt(pageMatch[1], 10);
 
     res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
-    res.json({ results, page: parseInt(page), totalPages });
+    res.json({ results, page: parseInt(page, 10), totalPages });
   } catch (err) {
     console.error('Search error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch search results', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch search results' });
   }
 });
 
@@ -165,7 +165,7 @@ router.get('/manga/*', async (req, res) => {
     res.json(payload);
   } catch (err) {
     console.error('Manga detail error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch manga details', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch manga details' });
   }
 });
 
@@ -200,7 +200,7 @@ router.get('/chapter', async (req, res) => {
     res.json({ images, prevChapter, nextChapter, chapterTitle, mangaTitle });
   } catch (err) {
     console.error('Chapter error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch chapter', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch chapter' });
   }
 });
 

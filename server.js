@@ -33,14 +33,23 @@ app.use('/api',       contentRoutes);
 app.use('/api/image', imageRoutes);
 
 // ─── Serve frontend (SPA fallback) ────────────────────────────────────────────
-app.get('*', (req, res) => {
+app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ─── Global error handler ─────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`ToonReader running at http://localhost:${PORT}`);
+  // prefetch() is a no-op when the page is already cached or a fetch is in-flight,
+  // so it is safe to call unconditionally on every startup.
   console.log('Prefetching home pages 1-5...');
   for (let p = 1; p <= 5; p++) prefetch(p);
   console.log('Prefetch started in background.');
